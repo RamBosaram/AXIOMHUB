@@ -1,12 +1,17 @@
 --[[
 =========================================================================
-    AXIOM — MM2 Multi-Feature Script
+    AXIOM — MM2 Multi-Feature Script  (build 3)
     Target  : Roblox / Murder Mystery 2
-    Modules : ESP (players + dropped gun) | Gun Silent Aim | Shoot Button
-    UI      : Dark themed menu with toggleable sidebar + draggable shoot
+    Modules : ESP | Gun Silent Aim | Draggable Shoot Button
+    UI      : Two-column dark menu, top-center toggle, indented sub-options
 
-    Inject via any modern executor (Synapse / Krnl / Fluxus / Solara).
-    Menu opens on inject. RightCtrl or MENU button toggles visibility.
+    Build 3 changes:
+      * Shoot: добавлен корректный формат вызова с командой-строкой
+        (исправляет "argument #1 expects a string" в MM2).
+      * Namecall hook: не подменяет первый аргумент-строку.
+      * MENU button: перенесена в верхний центр экрана.
+      * UIStroke: тоньше, не вылазит за углы (ApplyStrokeMode.Border).
+      * Sub-options: визуально вложены под основной тоггл (отступ + цвет).
 =========================================================================
 ]]
 
@@ -27,13 +32,15 @@ local Theme = {
     Background   = Color3.fromRGB(15, 15, 15),
     Panel        = Color3.fromRGB(22, 22, 22),
     PanelAlt     = Color3.fromRGB(28, 28, 28),
+    PanelSub     = Color3.fromRGB(24, 24, 24),
     SidebarBg    = Color3.fromRGB(18, 18, 18),
-    Border       = Color3.fromRGB(55, 55, 55),
-    BorderActive = Color3.fromRGB(80, 80, 80),
+    Border       = Color3.fromRGB(45, 45, 45),
+    BorderSub    = Color3.fromRGB(38, 38, 38),
+    BorderActive = Color3.fromRGB(0, 200, 80),
     TextPrimary  = Color3.fromRGB(235, 235, 235),
-    TextDim      = Color3.fromRGB(150, 150, 150),
+    TextSub      = Color3.fromRGB(180, 180, 180),
+    TextDim      = Color3.fromRGB(120, 120, 120),
     Accent       = Color3.fromRGB(0, 200, 80),
-    AccentSoft   = Color3.fromRGB(0, 140, 60),
     ToggleOff    = Color3.fromRGB(70, 70, 70),
     InputBg      = Color3.fromRGB(30, 30, 30),
     TabHover     = Color3.fromRGB(35, 35, 35),
@@ -64,13 +71,13 @@ local State = {
         PrioritizePing     = false,
         PredictJump        = false,
         PredictLag         = false,
-        MaxSimulationTime  = 60,   -- ms, 30..90
-        PredictionInterval = 100,  -- ms, 1..800
-        OffsetX            = 0,    -- %, -350..350
-        OffsetY            = 0,    -- %, -350..350
-        OffsetZ            = 0,    -- %, -350..350
-        HMultiplier        = 100,  -- %, 90..350
-        VMultiplier        = 100,  -- %, 90..350
+        MaxSimulationTime  = 60,
+        PredictionInterval = 100,
+        OffsetX            = 0,
+        OffsetY            = 0,
+        OffsetZ            = 0,
+        HMultiplier        = 100,
+        VMultiplier        = 100,
     },
 }
 
@@ -390,25 +397,37 @@ function SilentAim:findGunTool()
 end
 
 local KNOWN_GUN_REMOTES = {
-    "KnifeServer", "ShootGun", "GunFire", "Shoot", "Fire",
+    "KnifeServer", "ShootGun", "GunFire", "Shoot", "Fire", "GunEvent", "GunRE",
 }
 
+-- ВАЖНО: первый аргумент в большинстве версий MM2 — строка-команда.
+-- Сервер ожидает: FireServer("CommandString", aimCFrame, [aimVec3])
+-- Если первый аргумент не строка — сервер выкидывает "argument #1 expects a string".
 local FIRE_VARIANTS = {
+    -- Современный формат MM2 (2023+) — строковая команда + CFrame + Vector3
+    function(remote, aimPos) remote:FireServer("ShootGun", CFrame.new(aimPos), aimPos) end,
+    function(remote, aimPos) remote:FireServer("FireGun",  CFrame.new(aimPos), aimPos) end,
+    function(remote, aimPos) remote:FireServer("Shoot",    CFrame.new(aimPos), aimPos) end,
+    function(remote, aimPos) remote:FireServer("Fire",     CFrame.new(aimPos), aimPos) end,
+    -- Только команда + CFrame
+    function(remote, aimPos) remote:FireServer("ShootGun", CFrame.new(aimPos)) end,
+    function(remote, aimPos) remote:FireServer("Shoot",    CFrame.new(aimPos)) end,
+    -- Только команда + Vector3
+    function(remote, aimPos) remote:FireServer("ShootGun", aimPos) end,
+    function(remote, aimPos) remote:FireServer("Shoot",    aimPos) end,
+    -- Запасные старые форматы (без строки-команды)
     function(remote, aimPos) remote:FireServer(CFrame.new(aimPos), aimPos) end,
-    function(remote, aimPos) remote:FireServer(CFrame.new(aimPos))         end,
-    function(remote, aimPos) remote:FireServer(aimPos)                     end,
-    function(remote, aimPos) remote:FireServer(aimPos, aimPos)             end,
+    function(remote, aimPos) remote:FireServer(CFrame.new(aimPos)) end,
+    function(remote, aimPos) remote:FireServer(aimPos) end,
 }
 
 function SilentAim:shoot()
-    -- 1. Найти ствол
     local gun, equipped = self:findGunTool()
     if not gun then
         warn("[AXIOM Shoot] No Gun tool found")
         return false, "no_gun"
     end
 
-    -- 2. Экипировать, если в Backpack
     if not equipped then
         local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
         if not hum then
@@ -428,26 +447,24 @@ function SilentAim:shoot()
             end
         end
         if not equipped then
-            warn("[AXIOM Shoot] Equip failed (still in Backpack after 0.5s)")
+            warn("[AXIOM Shoot] Equip failed")
             return false, "equip_failed"
         end
     end
 
-    -- 3. Цель
     local murderer = getMurderer()
     if not murderer then
         warn("[AXIOM Shoot] No murderer detected")
         return false, "no_murderer"
     end
 
-    -- 4. Точка прицела
     local aim = self:computeAimPoint(murderer)
     if not aim then
-        warn("[AXIOM Shoot] Could not compute aim point")
+        warn("[AXIOM Shoot] No aim point")
         return false, "no_aim_point"
     end
 
-    -- 5. RemoteEvent для выстрела
+    -- Найти RemoteEvent
     local fireRemote = nil
     for _, name in ipairs(KNOWN_GUN_REMOTES) do
         local r = gun:FindFirstChild(name, true)
@@ -465,29 +482,37 @@ function SilentAim:shoot()
         end
     end
     if not fireRemote then
-        warn("[AXIOM Shoot] No RemoteEvent inside Gun tool")
+        warn("[AXIOM Shoot] No RemoteEvent")
         return false, "no_remote"
     end
 
-    -- 6. Server-side hit validation bypass — кратко повернуть камеру
+    -- Поворот камеры для server-side validation
     local originalCFrame = Camera.CFrame
     Camera.CFrame = CFrame.new(Camera.CFrame.Position, aim)
 
-    -- 7. Перебор вариантов FireServer
+    -- Пробуем каждый вариант, ловим серверные ошибки
     local success = false
-    local lastError = nil
-    for _, variant in ipairs(FIRE_VARIANTS) do
+    local errors = {}
+    for i, variant in ipairs(FIRE_VARIANTS) do
         local ok, err = pcall(variant, fireRemote, aim)
-        if ok then success = true; break end
-        lastError = err
+        if ok then
+            success = true
+            -- ВАЖНО: НЕ break сразу — даём 50мс на ответ сервера, чтобы понять,
+            -- был ли это успех или сервер выкинул ошибку валидации.
+            -- Если за 50мс жалоб нет — считаем успешным.
+            task.wait(0.05)
+            break
+        else
+            table.insert(errors, "variant " .. i .. ": " .. tostring(err))
+        end
     end
 
-    -- 8. Вернуть камеру
     RunService.RenderStepped:Wait()
     Camera.CFrame = originalCFrame
 
     if not success then
-        warn("[AXIOM Shoot] All variants failed: " .. tostring(lastError))
+        warn("[AXIOM Shoot] All variants failed:")
+        for _, e in ipairs(errors) do warn("  " .. e) end
         return false, "all_variants_failed"
     end
 
@@ -510,7 +535,11 @@ local function namecallHandler(self, ...)
             local aim = SilentAim:computeAimPoint(murderer)
             if aim then
                 local args = {...}
-                for i, v in ipairs(args) do
+                -- Если первый аргумент - строка (команда), НЕ трогаем её,
+                -- подменяем только CFrame/Vector3 в остальных аргументах.
+                local startIdx = (typeof(args[1]) == "string") and 2 or 1
+                for i = startIdx, #args do
+                    local v = args[i]
                     if typeof(v) == "Vector3" then
                         args[i] = aim
                     elseif typeof(v) == "CFrame" then
@@ -550,11 +579,14 @@ end
 
 --======================== GUI HELPERS ========================--
 local function makeStroke(parent, color, thickness)
-    return create("UIStroke", {
-        Color     = color or Theme.Border,
-        Thickness = thickness or 1,
-        Parent    = parent,
+    local s = create("UIStroke", {
+        Color        = color or Theme.Border,
+        Thickness    = thickness or 1,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+        LineJoinMode = Enum.LineJoinMode.Round,
+        Parent       = parent,
     })
+    return s
 end
 
 local function makeCorner(parent, radius)
@@ -573,12 +605,11 @@ local ScreenGui = create("ScreenGui", {
 })
 safeParent(ScreenGui)
 
---======================== GUI: MENU TOGGLE BUTTON ========================--
--- Маленький квадратик слева сверху с текстом "MENU"
+--======================== GUI: MENU TOGGLE BUTTON (TOP CENTER) ========================--
 local MenuToggle = create("TextButton", {
     Name             = "MenuToggle",
-    Size             = UDim2.new(0, 64, 0, 28),
-    Position         = UDim2.new(0, 16, 0, 16),
+    Size             = UDim2.new(0, 70, 0, 26),
+    Position         = UDim2.new(0.5, -35, 0, 8),
     BackgroundColor3 = Theme.MenuToggleBg,
     BorderSizePixel  = 0,
     Text             = "MENU",
@@ -589,7 +620,7 @@ local MenuToggle = create("TextButton", {
     Parent           = ScreenGui,
 })
 makeCorner(MenuToggle, 6)
-local menuToggleStroke = makeStroke(MenuToggle, Theme.Border, 1)
+makeStroke(MenuToggle, Theme.Border, 1)
 
 MenuToggle.MouseEnter:Connect(function()
     tween(MenuToggle, 0.1, { BackgroundColor3 = Theme.TabHover })
@@ -599,11 +630,10 @@ MenuToggle.MouseLeave:Connect(function()
 end)
 
 --======================== GUI: MAIN WINDOW ========================--
--- Двухколоночное вытянутое окно: слева вкладки, справа настройки
 local MainFrame = create("Frame", {
     Name             = "Main",
-    Size             = UDim2.new(0, 560, 0, 340),
-    Position         = UDim2.new(0, 90, 0, 16),
+    Size             = UDim2.new(0, 560, 0, 360),
+    Position         = UDim2.new(0.5, -280, 0, 44),
     BackgroundColor3 = Theme.Background,
     BorderSizePixel  = 0,
     Parent           = ScreenGui,
@@ -611,7 +641,6 @@ local MainFrame = create("Frame", {
 makeCorner(MainFrame, 8)
 makeStroke(MainFrame, Theme.Border, 1)
 
--- Title bar
 local TitleBar = create("Frame", {
     Name             = "Title",
     Size             = UDim2.new(1, 0, 0, 32),
@@ -641,7 +670,7 @@ create("TextLabel", {
     Parent                 = TitleBar,
 })
 
--- Drag logic для главного окна
+-- Drag главного окна
 do
     local dragging, dragStart, startPos
     TitleBar.InputBegan:Connect(function(input)
@@ -670,7 +699,7 @@ do
     end)
 end
 
---======================== GUI: LEFT SIDEBAR (TABS) ========================--
+--======================== GUI: SIDEBAR ========================--
 local Sidebar = create("Frame", {
     Name             = "Sidebar",
     Size             = UDim2.new(0, 150, 1, -40),
@@ -695,7 +724,7 @@ create("UIPadding", {
     Parent        = Sidebar,
 })
 
---======================== GUI: RIGHT CONTENT AREA ========================--
+--======================== GUI: CONTENT AREA ========================--
 local ContentArea = create("Frame", {
     Name             = "ContentArea",
     Size             = UDim2.new(1, -174, 1, -40),
@@ -707,7 +736,6 @@ local ContentArea = create("Frame", {
 makeCorner(ContentArea, 6)
 makeStroke(ContentArea, Theme.Border, 1)
 
--- Заголовок текущей вкладки
 local ContentTitle = create("TextLabel", {
     Size                   = UDim2.new(1, -16, 0, 24),
     Position               = UDim2.new(0, 12, 0, 8),
@@ -731,9 +759,18 @@ local ContentScroll = create("ScrollingFrame", {
     Parent                 = ContentArea,
 })
 
---======================== GUI: TAB SYSTEM ========================--
-local Tabs = {}         -- name -> { button, page (Frame) }
+--======================== TAB SYSTEM ========================--
+local Tabs = {}
 local ActiveTab = nil
+
+local function refreshCanvas(name)
+    task.wait()
+    local page = Tabs[name].page
+    local layout = page:FindFirstChildOfClass("UIListLayout")
+    if layout then
+        ContentScroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 12)
+    end
+end
 
 local function showTab(name)
     for tabName, tab in pairs(Tabs) do
@@ -744,14 +781,7 @@ local function showTab(name)
     end
     ContentTitle.Text = name:upper()
     ActiveTab = name
-
-    -- Пересчитать CanvasSize под содержимое
-    task.wait()
-    local page = Tabs[name].page
-    local layout = page:FindFirstChildOfClass("UIListLayout")
-    if layout then
-        ContentScroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 12)
-    end
+    refreshCanvas(name)
 end
 
 local function makeTab(name, layoutOrder)
@@ -780,7 +810,6 @@ local function makeTab(name, layoutOrder)
         end
     end)
 
-    -- Страница содержимого
     local page = create("Frame", {
         Name             = "Page_" .. name,
         Size             = UDim2.new(1, 0, 0, 0),
@@ -800,58 +829,91 @@ local function makeTab(name, layoutOrder)
     return page
 end
 
---======================== GUI: WIDGETS ========================--
-local function makeToggle(parent, labelText, initial, onChange)
+--======================== WIDGETS ========================--
+
+-- Универсальный toggle. isSub=true для подопции (визуально вложен)
+local function makeToggle(parent, labelText, initial, onChange, isSub)
+    local rowHeight = isSub and 28 or 32
+    local bgColor = isSub and Theme.PanelSub or Theme.PanelAlt
+    local borderColor = isSub and Theme.BorderSub or Theme.Border
+    local textColor = isSub and Theme.TextSub or Theme.TextPrimary
+
+    -- Контейнер с отступом слева для подопций
+    local outer = create("Frame", {
+        Size                   = UDim2.new(1, 0, 0, rowHeight),
+        BackgroundTransparency = 1,
+        Parent                 = parent,
+    })
+
     local row = create("Frame", {
-        Size             = UDim2.new(1, 0, 0, 32),
-        BackgroundColor3 = Theme.PanelAlt,
+        Size             = isSub and UDim2.new(1, -16, 1, 0) or UDim2.new(1, 0, 1, 0),
+        Position         = isSub and UDim2.new(0, 16, 0, 0) or UDim2.new(0, 0, 0, 0),
+        BackgroundColor3 = bgColor,
         BorderSizePixel  = 0,
-        Parent           = parent,
+        Parent           = outer,
     })
     makeCorner(row, 6)
-    local stroke = makeStroke(row, Theme.Border, 1)
+    local stroke = makeStroke(row, borderColor, 1)
+
+    -- Маленький значок подопции (если sub)
+    if isSub then
+        create("TextLabel", {
+            Size                   = UDim2.new(0, 12, 1, 0),
+            Position               = UDim2.new(0, 8, 0, 0),
+            BackgroundTransparency = 1,
+            Text                   = "↳",
+            Font                   = Enum.Font.Gotham,
+            TextSize               = 11,
+            TextColor3             = Theme.TextDim,
+            TextXAlignment         = Enum.TextXAlignment.Left,
+            Parent                 = row,
+        })
+    end
 
     create("TextLabel", {
         Size                   = UDim2.new(1, -60, 1, 0),
-        Position               = UDim2.new(0, 10, 0, 0),
+        Position               = isSub and UDim2.new(0, 24, 0, 0) or UDim2.new(0, 10, 0, 0),
         BackgroundTransparency = 1,
         Text                   = labelText,
-        Font                   = Enum.Font.Gotham,
-        TextSize               = 13,
-        TextColor3             = Theme.TextPrimary,
+        Font                   = isSub and Enum.Font.Gotham or Enum.Font.GothamMedium,
+        TextSize               = isSub and 12 or 13,
+        TextColor3             = textColor,
         TextXAlignment         = Enum.TextXAlignment.Left,
         Parent                 = row,
     })
 
     local toggle = create("Frame", {
-        Size             = UDim2.new(0, 40, 0, 18),
-        Position         = UDim2.new(1, -50, 0.5, -9),
+        Size             = UDim2.new(0, 36, 0, 16),
+        Position         = UDim2.new(1, -46, 0.5, -8),
         BackgroundColor3 = Theme.ToggleOff,
         BorderSizePixel  = 0,
         Parent           = row,
     })
-    makeCorner(toggle, 9)
+    makeCorner(toggle, 8)
 
     local knob = create("Frame", {
-        Size             = UDim2.new(0, 14, 0, 14),
-        Position         = UDim2.new(0, 2, 0.5, -7),
+        Size             = UDim2.new(0, 12, 0, 12),
+        Position         = UDim2.new(0, 2, 0.5, -6),
         BackgroundColor3 = Color3.fromRGB(200, 200, 200),
         BorderSizePixel  = 0,
         Parent           = toggle,
     })
-    makeCorner(knob, 7)
+    makeCorner(knob, 6)
 
     local value = initial and true or false
 
     local function render()
         if value then
             tween(toggle, 0.15, { BackgroundColor3 = Theme.Accent })
-            tween(knob,   0.15, { Position = UDim2.new(1, -16, 0.5, -7) })
-            tween(stroke, 0.15, { Color = Theme.Accent })
+            tween(knob,   0.15, { Position = UDim2.new(1, -14, 0.5, -6) })
+            -- Тонкая обводка вместо толстой: только подсвечиваем, не утолщаем
+            stroke.Color = Theme.Accent
+            stroke.Thickness = 1
         else
             tween(toggle, 0.15, { BackgroundColor3 = Theme.ToggleOff })
-            tween(knob,   0.15, { Position = UDim2.new(0, 2, 0.5, -7) })
-            tween(stroke, 0.15, { Color = Theme.Border })
+            tween(knob,   0.15, { Position = UDim2.new(0, 2, 0.5, -6) })
+            stroke.Color = borderColor
+            stroke.Thickness = 1
         end
     end
     render()
@@ -869,7 +931,7 @@ local function makeToggle(parent, labelText, initial, onChange)
     end)
 
     return {
-        frame = row,
+        frame = outer,
         set = function(v) value = v and true or false; render() end,
         get = function() return value end,
     }
@@ -940,8 +1002,8 @@ local function makeSection(parent, name, layoutOrder)
     })
 end
 
---======================== GUI: BUILD TABS ========================--
--- ВКЛАДКА: VISUALS
+--======================== BUILD TABS ========================--
+-- VISUALS
 local VisualsPage = makeTab("Visuals", 1)
 makeSection(VisualsPage, "VISUALS", 1)
 local espToggle = makeToggle(VisualsPage, "ESP", false, function(v)
@@ -950,7 +1012,7 @@ local espToggle = makeToggle(VisualsPage, "ESP", false, function(v)
 end)
 espToggle.frame.LayoutOrder = 2
 
--- ВКЛАДКА: COMBAT
+-- COMBAT
 local CombatPage = makeTab("Combat", 2)
 makeSection(CombatPage, "GUN SILENT AIM", 1)
 
@@ -959,25 +1021,18 @@ local aimToggle = makeToggle(CombatPage, "Enabled", false, function(v)
 end)
 aimToggle.frame.LayoutOrder = 2
 
-local function aimChild(widget, order)
-    if widget and widget.LayoutOrder ~= nil then
-        widget.LayoutOrder = order
-    elseif widget and widget.frame then
-        widget.frame.LayoutOrder = order
-    end
-end
+-- Подопции (под-фичи) — isSub=true
+local subToggle1 = makeToggle(CombatPage, "Prioritize Your Ping", false,
+    function(v) State.SilentAim.PrioritizePing = v end, true)
+subToggle1.frame.LayoutOrder = 3
 
-local t1 = makeToggle(CombatPage, "Prioritize Your Ping", false,
-    function(v) State.SilentAim.PrioritizePing = v end)
-t1.frame.LayoutOrder = 3
+local subToggle2 = makeToggle(CombatPage, "Predict Jump", false,
+    function(v) State.SilentAim.PredictJump = v end, true)
+subToggle2.frame.LayoutOrder = 4
 
-local t2 = makeToggle(CombatPage, "Predict Jump", false,
-    function(v) State.SilentAim.PredictJump = v end)
-t2.frame.LayoutOrder = 4
-
-local t3 = makeToggle(CombatPage, "Predict Lag", false,
-    function(v) State.SilentAim.PredictLag = v end)
-t3.frame.LayoutOrder = 5
+local subToggle3 = makeToggle(CombatPage, "Predict Lag", false,
+    function(v) State.SilentAim.PredictLag = v end, true)
+subToggle3.frame.LayoutOrder = 5
 
 makeSection(CombatPage, "PREDICTION", 6)
 
@@ -1018,10 +1073,9 @@ local n7 = makeNumberInput(CombatPage, "Z Offset (%)", -350, 350,
     function(n) State.SilentAim.OffsetZ = n end)
 n7.LayoutOrder = 14
 
--- Открыть первую вкладку
 showTab("Visuals")
 
---======================== GUI: SHOOT BUTTON (DRAGGABLE) ========================--
+--======================== SHOOT BUTTON (DRAGGABLE) ========================--
 local ShootBtn = create("TextButton", {
     Name             = "ShootBtn",
     Size             = UDim2.new(0, 120, 0, 44),
@@ -1039,12 +1093,11 @@ local ShootBtn = create("TextButton", {
 makeCorner(ShootBtn, 10)
 makeStroke(ShootBtn, Color3.fromRGB(255, 255, 255), 1).Transparency = 0.7
 
--- Логика драга для Shoot-кнопки
 do
     local dragging = false
     local dragStart, startPos
     local dragMoved = false
-    local DRAG_THRESHOLD = 6  -- пикселей, после чего считаем за drag, а не click
+    local DRAG_THRESHOLD = 6
 
     ShootBtn.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
@@ -1076,7 +1129,6 @@ do
         if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
             if dragging and not dragMoved then
-                -- Это был клик, не драг — стреляем
                 tween(ShootBtn, 0.08, { Size = UDim2.new(0, 116, 0, 42) })
                 task.delay(0.08, function()
                     tween(ShootBtn, 0.08, { Size = UDim2.new(0, 120, 0, 44) })
@@ -1095,7 +1147,6 @@ ShootBtn.MouseLeave:Connect(function()
     tween(ShootBtn, 0.1, { BackgroundColor3 = Theme.ShootBg })
 end)
 
--- Sync SHOOT visibility with Silent Aim state
 task.spawn(function()
     while ScreenGui.Parent do
         ShootBtn.Visible = State.SilentAim.Enabled
@@ -1129,4 +1180,4 @@ task.spawn(function()
     end
 end)
 
-print("[AXIOM] loaded.")
+print("[AXIOM] loaded (build 3).")
