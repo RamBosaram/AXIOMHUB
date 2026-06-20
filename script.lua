@@ -665,18 +665,6 @@ TabBar.BackgroundColor3 = Theme.secondary
 TabBar.BackgroundTransparency = 0.3
 TabBar.BorderSizePixel = 0
 
-local tabBarCorner = Instance.new("UICorner", TabBar)
-tabBarCorner.CornerRadius = UDim.new(0, 14)
-
--- Маска чтобы правые углы TabBar не торчали скруглением (там Content рядом)
-local tabBarMask = Instance.new("Frame", TabBar)
-tabBarMask.AnchorPoint = Vector2.new(1, 0)
-tabBarMask.Position = UDim2.new(1, 0, 0, 0)
-tabBarMask.Size = UDim2.new(0, 14, 1, 0)
-tabBarMask.BackgroundColor3 = Theme.secondary
-tabBarMask.BackgroundTransparency = 0.3
-tabBarMask.BorderSizePixel = 0
-tabBarMask.ZIndex = 0
 
 local tabLayout = Instance.new("UIListLayout", TabBar)
 tabLayout.Padding = UDim.new(0, 4)
@@ -781,7 +769,9 @@ local combatPage = CombatTab.page
 local origLayout = combatPage:FindFirstChildOfClass("UIListLayout")
 if origLayout then origLayout:Destroy() end
 
-local combatSplit = Instance.new("Frame", combatPage)
+combatPage.Visible = false  -- старая страница больше не нужна
+local combatSplit = Instance.new("Frame", Content)
+combatSplit.Name = "CombatPage"
 combatSplit.Size = UDim2.new(1, 0, 1, 0)
 combatSplit.BackgroundTransparency = 1
 combatSplit.Name = "Split"
