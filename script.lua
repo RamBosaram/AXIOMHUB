@@ -699,16 +699,24 @@ local currentPage = nil
 local function makeTab(name, order)
     local btn = Instance.new("TextButton", TabBar)
     btn.Name = name.."Tab"
-    btn.Size = UDim2.new(1, 0, 0, 32)
-    btn.BackgroundColor3 = Theme.primary
+    btn.Size = UDim2.new(1, 0, 0, 36)
+    btn.BackgroundColor3 = Color3.fromRGB(28, 24, 38)  -- светлее фона
+    btn.BackgroundTransparency = 0.1
     btn.BorderSizePixel = 0
     btn.Text = name
-    btn.Font = Theme.font
+    btn.Font = Enum.Font.GothamBold                     -- жирный
     btn.TextColor3 = Theme.text
-    btn.TextSize = 13
+    btn.TextSize = 14
     btn.LayoutOrder = order
     btn.AutoButtonColor = false
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 7)
+    btn.Active = true
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+    -- Тонкая обводка для контраста
+    local btnStroke = Instance.new("UIStroke", btn)
+    btnStroke.Color = Theme.accentDeep
+    btnStroke.Thickness = 1
+    btnStroke.Transparency = 0.6
 
     local page = Instance.new("ScrollingFrame", Content)
     page.Name = name.."Page"
@@ -727,15 +735,31 @@ local function makeTab(name, order)
     layout.SortOrder = Enum.SortOrder.LayoutOrder
     layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
-    Pages[name] = {button = btn, page = page, order = 0}
+    Pages[name] = {button = btn, page = page, order = 0, stroke = btnStroke}
 
     btn.MouseButton1Click:Connect(function()
         for _, p in pairs(Pages) do
             p.page.Visible = false
-            TweenService:Create(p.button, TweenInfo.new(0.2), {BackgroundColor3 = Theme.primary}):Play()
+            TweenService:Create(p.button, TweenInfo.new(0.2), {
+                BackgroundColor3 = Color3.fromRGB(28, 24, 38),
+                BackgroundTransparency = 0.1
+            }):Play()
+            if p.stroke then
+                TweenService:Create(p.stroke, TweenInfo.new(0.2), {
+                    Color = Theme.accentDeep,
+                    Transparency = 0.6
+                }):Play()
+            end
         end
         page.Visible = true
-        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Theme.accentDeep}):Play()
+        TweenService:Create(btn, TweenInfo.new(0.2), {
+            BackgroundColor3 = Theme.accentDeep,
+            BackgroundTransparency = 0
+        }):Play()
+        TweenService:Create(btnStroke, TweenInfo.new(0.2), {
+            Color = Theme.accent,
+            Transparency = 0
+        }):Play()
         currentPage = name
 
         page.Position = UDim2.new(0, 8, 0, 16)
@@ -747,10 +771,61 @@ local function makeTab(name, order)
     return Pages[name]
 end
 
-local VisualPage   = makeTab("Visual", 1)
-local SheriffPage  = makeTab("Sheriff", 2)
-local MurdererPage = makeTab("Murderer", 3)
-local WorldPage    = makeTab("World", 4)
+local VisualPage = makeTab("Visual", 1)
+local CombatTab  = makeTab("Combat", 2)
+local WorldPage  = makeTab("World", 3)
+
+-- Combat split: левая половина Sheriff, правая Murderer
+-- Переопределяем CombatTab.page, чтобы внутри был split
+local combatPage = CombatTab.page
+local origLayout = combatPage:FindFirstChildOfClass("UIListLayout")
+if origLayout then origLayout:Destroy() end
+
+local combatSplit = Instance.new("Frame", combatPage)
+combatSplit.Size = UDim2.new(1, 0, 1, 0)
+combatSplit.BackgroundTransparency = 1
+combatSplit.Name = "Split"
+
+local sheriffSide = Instance.new("ScrollingFrame", combatSplit)
+sheriffSide.Size = UDim2.new(0.5, -4, 1, 0)
+sheriffSide.Position = UDim2.new(0, 0, 0, 0)
+sheriffSide.BackgroundTransparency = 1
+sheriffSide.BorderSizePixel = 0
+sheriffSide.ScrollBarThickness = 2
+sheriffSide.ScrollBarImageColor3 = Theme.accent
+sheriffSide.CanvasSize = UDim2.new(0, 0, 0, 0)
+sheriffSide.AutomaticCanvasSize = Enum.AutomaticSize.Y
+
+local sheriffLayout = Instance.new("UIListLayout", sheriffSide)
+sheriffLayout.Padding = UDim.new(0, 6)
+sheriffLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+-- Вертикальный разделитель
+local divider = Instance.new("Frame", combatSplit)
+divider.AnchorPoint = Vector2.new(0.5, 0.5)
+divider.Position = UDim2.new(0.5, 0, 0.5, 0)
+divider.Size = UDim2.new(0, 1, 1, -10)
+divider.BackgroundColor3 = Theme.accentDeep
+divider.BackgroundTransparency = 0.5
+divider.BorderSizePixel = 0
+
+local murdererSide = Instance.new("ScrollingFrame", combatSplit)
+murdererSide.Size = UDim2.new(0.5, -4, 1, 0)
+murdererSide.Position = UDim2.new(0.5, 4, 0, 0)
+murdererSide.BackgroundTransparency = 1
+murdererSide.BorderSizePixel = 0
+murdererSide.ScrollBarThickness = 2
+murdererSide.ScrollBarImageColor3 = Theme.accent
+murdererSide.CanvasSize = UDim2.new(0, 0, 0, 0)
+murdererSide.AutomaticCanvasSize = Enum.AutomaticSize.Y
+
+local murdererLayout = Instance.new("UIListLayout", murdererSide)
+murdererLayout.Padding = UDim.new(0, 6)
+murdererLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+-- Псевдо-страницы для addToggle/addButton/etc — они принимают pageData с полем .page
+local SheriffPage  = {page = sheriffSide,  order = 0, button = CombatTab.button}
+local MurdererPage = {page = murdererSide, order = 0, button = CombatTab.button}
 ----------------------------------------------------------------
 -- WIDGETS (multi-touch safe)
 ----------------------------------------------------------------
@@ -1896,6 +1971,17 @@ end)
 ----------------------------------------------------------------
 -- SHERIFF PAGE
 ----------------------------------------------------------------
+-- Заголовок колонки Шерифа
+local sheriffTitle = Instance.new("TextLabel", sheriffSide)
+sheriffTitle.Size = UDim2.new(1, -10, 0, 26)
+sheriffTitle.BackgroundTransparency = 1
+sheriffTitle.Font = Enum.Font.GothamBold
+sheriffTitle.Text = "SHERIFF"
+sheriffTitle.TextColor3 = Color3.fromRGB(90, 180, 255)
+sheriffTitle.TextSize = 15
+sheriffTitle.TextXAlignment = Enum.TextXAlignment.Center
+sheriffTitle.LayoutOrder = 0
+SheriffPage.order = 0
 addSection(SheriffPage, "Combat")
 
 addButton(SheriffPage, "Shoot murderer", function() shootMurderer(false) end)
@@ -1962,6 +2048,17 @@ addToggle(SheriffPage, "Auto-grab dropped gun", false, function(s) State.autoGet
 ----------------------------------------------------------------
 -- MURDERER PAGE
 ----------------------------------------------------------------
+-- Заголовок колонки Убийцы
+local murdTitle = Instance.new("TextLabel", murdererSide)
+murdTitle.Size = UDim2.new(1, -10, 0, 26)
+murdTitle.BackgroundTransparency = 1
+murdTitle.Font = Enum.Font.GothamBold
+murdTitle.Text = "MURDERER"
+murdTitle.TextColor3 = Color3.fromRGB(255, 80, 100)
+murdTitle.TextSize = 15
+murdTitle.TextXAlignment = Enum.TextXAlignment.Center
+murdTitle.LayoutOrder = 0
+MurdererPage.order = 0
 addSection(MurdererPage, "Knife throw")
 
 addButton(MurdererPage, "Throw knife at nearest", function() knifeThrow(false, false) end)
