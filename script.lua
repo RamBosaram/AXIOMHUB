@@ -759,63 +759,9 @@ local function makeTab(name, order)
     return Pages[name]
 end
 
-local VisualPage = makeTab("Visual", 1)
-local CombatTab  = makeTab("Combat", 2)
-local WorldPage  = makeTab("World", 3)
-
--- Combat split: левая половина Sheriff, правая Murderer
--- Переопределяем CombatTab.page, чтобы внутри был split
-local combatPage = CombatTab.page
-local origLayout = combatPage:FindFirstChildOfClass("UIListLayout")
-if origLayout then origLayout:Destroy() end
-
-combatPage.Visible = false  -- старая страница больше не нужна
-local combatSplit = Instance.new("Frame", Content)
-combatSplit.Name = "CombatPage"
-combatSplit.Size = UDim2.new(1, 0, 1, 0)
-combatSplit.BackgroundTransparency = 1
-combatSplit.Name = "Split"
-
-local sheriffSide = Instance.new("ScrollingFrame", combatSplit)
-sheriffSide.Size = UDim2.new(0.5, -4, 1, 0)
-sheriffSide.Position = UDim2.new(0, 0, 0, 0)
-sheriffSide.BackgroundTransparency = 1
-sheriffSide.BorderSizePixel = 0
-sheriffSide.ScrollBarThickness = 2
-sheriffSide.ScrollBarImageColor3 = Theme.accent
-sheriffSide.CanvasSize = UDim2.new(0, 0, 0, 0)
-sheriffSide.AutomaticCanvasSize = Enum.AutomaticSize.Y
-
-local sheriffLayout = Instance.new("UIListLayout", sheriffSide)
-sheriffLayout.Padding = UDim.new(0, 6)
-sheriffLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
--- Вертикальный разделитель
-local divider = Instance.new("Frame", combatSplit)
-divider.AnchorPoint = Vector2.new(0.5, 0.5)
-divider.Position = UDim2.new(0.5, 0, 0.5, 0)
-divider.Size = UDim2.new(0, 1, 1, -10)
-divider.BackgroundColor3 = Theme.accentDeep
-divider.BackgroundTransparency = 0.5
-divider.BorderSizePixel = 0
-
-local murdererSide = Instance.new("ScrollingFrame", combatSplit)
-murdererSide.Size = UDim2.new(0.5, -4, 1, 0)
-murdererSide.Position = UDim2.new(0.5, 4, 0, 0)
-murdererSide.BackgroundTransparency = 1
-murdererSide.BorderSizePixel = 0
-murdererSide.ScrollBarThickness = 2
-murdererSide.ScrollBarImageColor3 = Theme.accent
-murdererSide.CanvasSize = UDim2.new(0, 0, 0, 0)
-murdererSide.AutomaticCanvasSize = Enum.AutomaticSize.Y
-
-local murdererLayout = Instance.new("UIListLayout", murdererSide)
-murdererLayout.Padding = UDim.new(0, 6)
-murdererLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
--- Псевдо-страницы для addToggle/addButton/etc — они принимают pageData с полем .page
-local SheriffPage  = {page = sheriffSide,  order = 0, button = CombatTab.button}
-local MurdererPage = {page = murdererSide, order = 0, button = CombatTab.button}
+local VisualPage  = makeTab("Visual", 1)
+local CombatPage  = makeTab("Combat", 2)
+local WorldPage   = makeTab("World", 3)
 ----------------------------------------------------------------
 -- WIDGETS (multi-touch safe)
 ----------------------------------------------------------------
@@ -1959,19 +1905,31 @@ addButton(VisualPage, "Send roles to chat", function()
 end)
 
 ----------------------------------------------------------------
--- SHERIFF PAGE
+-- COMBAT PAGE (Sheriff блок сверху, Murderer блок снизу)
 ----------------------------------------------------------------
--- Заголовок колонки Шерифа
-local sheriffTitle = Instance.new("TextLabel", sheriffSide)
-sheriffTitle.Size = UDim2.new(1, -10, 0, 26)
-sheriffTitle.BackgroundTransparency = 1
-sheriffTitle.Font = Enum.Font.GothamBold
-sheriffTitle.Text = "SHERIFF"
-sheriffTitle.TextColor3 = Color3.fromRGB(90, 180, 255)
-sheriffTitle.TextSize = 15
-sheriffTitle.TextXAlignment = Enum.TextXAlignment.Center
-sheriffTitle.LayoutOrder = 0
-SheriffPage.order = 0
+-- ===================== SHERIFF SECTION =====================
+local sheriffHeader = Instance.new("TextLabel", CombatPage.page)
+sheriffHeader.Size = UDim2.new(1, -10, 0, 30)
+sheriffHeader.BackgroundColor3 = Color3.fromRGB(20, 30, 50)
+sheriffHeader.BackgroundTransparency = 0.3
+sheriffHeader.BorderSizePixel = 0
+sheriffHeader.Font = Enum.Font.GothamBold
+sheriffHeader.Text = "═══  SHERIFF  ═══"
+sheriffHeader.TextColor3 = Color3.fromRGB(90, 180, 255)
+sheriffHeader.TextSize = 14
+sheriffHeader.TextXAlignment = Enum.TextXAlignment.Center
+CombatPage.order = CombatPage.order + 1
+sheriffHeader.LayoutOrder = CombatPage.order
+Instance.new("UICorner", sheriffHeader).CornerRadius = UDim.new(0, 6)
+
+local sheriffHeaderStroke = Instance.new("UIStroke", sheriffHeader)
+sheriffHeaderStroke.Color = Color3.fromRGB(90, 180, 255)
+sheriffHeaderStroke.Thickness = 1
+sheriffHeaderStroke.Transparency = 0.5
+
+-- Дальше все Sheriff-настройки используют CombatPage вместо SheriffPage
+local SheriffPage = CombatPage
+
 addSection(SheriffPage, "Combat")
 
 addButton(SheriffPage, "Shoot murderer", function() shootMurderer(false) end)
@@ -2036,19 +1994,37 @@ end)
 addToggle(SheriffPage, "Auto-grab dropped gun", false, function(s) State.autoGetGun = s end)
 
 ----------------------------------------------------------------
--- MURDERER PAGE
+-- MURDERER SECTION (внутри Combat tab, ниже Sheriff)
 ----------------------------------------------------------------
--- Заголовок колонки Убийцы
-local murdTitle = Instance.new("TextLabel", murdererSide)
-murdTitle.Size = UDim2.new(1, -10, 0, 26)
-murdTitle.BackgroundTransparency = 1
-murdTitle.Font = Enum.Font.GothamBold
-murdTitle.Text = "MURDERER"
-murdTitle.TextColor3 = Color3.fromRGB(255, 80, 100)
-murdTitle.TextSize = 15
-murdTitle.TextXAlignment = Enum.TextXAlignment.Center
-murdTitle.LayoutOrder = 0
-MurdererPage.order = 0
+-- Разделитель + заголовок Убийцы
+local murdererSpacer = Instance.new("Frame", CombatPage.page)
+murdererSpacer.Size = UDim2.new(1, -10, 0, 12)
+murdererSpacer.BackgroundTransparency = 1
+CombatPage.order = CombatPage.order + 1
+murdererSpacer.LayoutOrder = CombatPage.order
+
+local murdererHeader = Instance.new("TextLabel", CombatPage.page)
+murdererHeader.Size = UDim2.new(1, -10, 0, 30)
+murdererHeader.BackgroundColor3 = Color3.fromRGB(50, 20, 25)
+murdererHeader.BackgroundTransparency = 0.3
+murdererHeader.BorderSizePixel = 0
+murdererHeader.Font = Enum.Font.GothamBold
+murdererHeader.Text = "═══  MURDERER  ═══"
+murdererHeader.TextColor3 = Color3.fromRGB(255, 80, 100)
+murdererHeader.TextSize = 14
+murdererHeader.TextXAlignment = Enum.TextXAlignment.Center
+CombatPage.order = CombatPage.order + 1
+murdererHeader.LayoutOrder = CombatPage.order
+Instance.new("UICorner", murdererHeader).CornerRadius = UDim.new(0, 6)
+
+local murdererHeaderStroke = Instance.new("UIStroke", murdererHeader)
+murdererHeaderStroke.Color = Color3.fromRGB(255, 80, 100)
+murdererHeaderStroke.Thickness = 1
+murdererHeaderStroke.Transparency = 0.5
+
+-- Псевдоним: всё что писалось в MurdererPage теперь идёт в CombatPage
+local MurdererPage = CombatPage
+
 addSection(MurdererPage, "Knife throw")
 
 addButton(MurdererPage, "Throw knife at nearest", function() knifeThrow(false, false) end)
