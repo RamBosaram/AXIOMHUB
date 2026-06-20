@@ -1,21 +1,19 @@
 --[[
 =========================================================================
-    AXIOM — MM2 Multi-Feature Script  (build 4)
+    AXIOM — MM2 Multi-Feature Script  (build 5)
     Target  : Roblox / Murder Mystery 2
-    Modules : ESP | Gun Silent Aim | Draggable Shoot Button
-    UI      : Two-column dark menu, top-center toggle, indented sub-options
+    Modules : ESP | Gun Silent Aim | Auto-Shoot | Teleport | Draggable SHOOT
 
-    Build 4 changes (Stage 1 — Shoot fix + executor compatibility):
-      * Shoot: переписана под реальный API MM2:
-          Gun.KnifeLocal.CreateBeam.RemoteFunction:InvokeServer(1, pos, "AH2")
-        Никаких больше FIRE_VARIANTS-угадаек.
-      * Executor compatibility: добавлен детект Delta X / Arceus X / Solara
-        / Synapse с fallback chain (gethui → get_hidden_gui → protect_gui
-        → CoreGui → PlayerGui).
-      * computeAimPoint: добавлен быстрый fallback (без предиктов).
-      * Namecall hook: чинит подмену Vector3/CFrame даже если строка-команда
-        идёт не первым, а последним аргументом (как в MM2: 1, Vector3, "AH2").
-      * Better warnings: понятные сообщения через notify() вместо warn().
+    Build 5 changes (Stage 2):
+      * GunDrop ESP: починен поиск — теперь сканируем Workspace на Model
+        с именем "GunDrop" (стандарт MM2), не Tool в Workspace.
+      * Auto-Shoot Murderer: автостельба каждые 0.2с при готовности пушки;
+        с обязательной проверкой raycast (стреляем только если видно).
+      * Teleport to dropped gun: телепорт к пушке, ожидание подбора,
+        возврат на исходную позицию.
+      * Combat tab: добавлены тогглы Auto-Shoot и Visibility Check.
+      * Misc tab: добавлен телепорт-кнопка.
+      * UI: MenuToggle уменьшен (60x20, шрифт 11).
 =========================================================================
 ]]
 
@@ -53,6 +51,8 @@ local Theme = {
     ShootBg      = Color3.fromRGB(180, 30, 30),
     ShootHover   = Color3.fromRGB(220, 50, 50),
     MenuToggleBg = Color3.fromRGB(25, 25, 25),
+    ActionBg     = Color3.fromRGB(40, 40, 40),
+    ActionHover  = Color3.fromRGB(55, 55, 55),
 }
 
 local ESPColors = {
@@ -84,13 +84,19 @@ local State = {
         HMultiplier        = 100,
         VMultiplier        = 100,
     },
+    AutoShoot = {
+        Enabled         = false,
+        VisibilityCheck = true,
+        TryInterval     = 0.2,   -- попытка стрельбы каждые 0.2с
+        CooldownAfterFail = 0.4, -- пауза если сервер отказал (перезарядка)
+    },
+    Teleport = {
+        AutoReturn = true,
+    },
 }
 
 --======================== EXECUTOR DETECTION ========================--
-local Executor = {
-    name = "Unknown",
-    hui  = nil,
-}
+local Executor = { name = "Unknown", hui = nil }
 
 do
     local function tryGetExecutorName()
@@ -106,7 +112,6 @@ do
     end
     Executor.name = tryGetExecutorName()
 
-    -- Hidden UI container (антидетект)
     if gethui then
         local ok, hui = pcall(gethui)
         if ok and hui then Executor.hui = hui end
@@ -129,31 +134,24 @@ end
 
 --======================== UTILITIES ========================--
 local function safeParent(gui)
-    -- Приоритет: hidden UI (gethui/get_hidden_gui) → protect_gui → CoreGui → PlayerGui
     if Executor.hui then
         local ok = pcall(function() gui.Parent = Executor.hui end)
         if ok then return end
     end
-
     if syn and syn.protect_gui then
         local ok = pcall(function()
-            syn.protect_gui(gui)
-            gui.Parent = CoreGui
+            syn.protect_gui(gui); gui.Parent = CoreGui
         end)
         if ok then return end
     end
-
     if protect_gui then
         local ok = pcall(function()
-            protect_gui(gui)
-            gui.Parent = CoreGui
+            protect_gui(gui); gui.Parent = CoreGui
         end)
         if ok then return end
     end
-
     local ok = pcall(function() gui.Parent = CoreGui end)
     if ok then return end
-
     gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 end
 
@@ -201,8 +199,6 @@ local function getMurderer()
     return nil
 end
 
--- На случай, если ты сам шериф, но мёрдера ещё нет — стреляем в ближайшего
--- врага-шерифа (как делает YARHM в findSheriffThatsNotMe). Полезно для трейнинга.
 local function getFallbackTarget()
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LocalPlayer and isAlive(p) and getRole(p) == "Sheriff" then
@@ -215,6 +211,43 @@ end
 local function getHRP(player)
     local char = player.Character
     return char and char:FindFirstChild("HumanoidRootPart") or nil
+end
+
+-- Поиск карты раунда (как в YARHM: папка с CoinContainer и Spawns)
+local function getMap()
+    for _, o in ipairs(Workspace:GetChildren()) do
+        if o:FindFirstChild("CoinContainer") and o:FindFirstChild("Spawns") then
+            return o
+        end
+    end
+    return nil
+end
+
+-- Поиск дропнутой пушки.
+-- В MM2 это Model с именем "GunDrop" — либо в папке карты, либо в Workspace.
+local function findGunDrop()
+    local map = getMap()
+    if map then
+        local g = map:FindFirstChild("GunDrop")
+        if g then return g end
+    end
+    -- Fallback: ищем в самом Workspace (на случай старых билдов)
+    local g = Workspace:FindFirstChild("GunDrop")
+    if g then return g end
+    return nil
+end
+
+-- Получить позицию объекта (Model или BasePart)
+local function getObjectPosition(obj)
+    if not obj then return nil end
+    if obj:IsA("Model") then
+        local ok, cf = pcall(function() return obj:GetPivot() end)
+        if ok and cf then return cf.Position end
+        if obj.PrimaryPart then return obj.PrimaryPart.Position end
+    elseif obj:IsA("BasePart") then
+        return obj.Position
+    end
+    return nil
 end
 
 --======================== ESP MODULE ========================--
@@ -256,22 +289,27 @@ function ESP:applyPlayer(player)
     s.highlight.Enabled             = true
 end
 
-function ESP:isGunDrop(obj)
-    return obj:IsA("Tool") and obj.Name == "Gun" and obj.Parent == Workspace
-end
+-- Применить ESP к дропнутой пушке (Model "GunDrop")
+function ESP:applyGunDrop(gunDrop)
+    if not gunDrop then return end
 
-function ESP:applyGunDrop(tool)
-    local handle = tool:FindFirstChild("Handle") or tool:FindFirstChildWhichIsA("BasePart")
-    if not handle then return end
+    self.gunDrops[gunDrop] = self.gunDrops[gunDrop] or {}
+    local s = self.gunDrops[gunDrop]
 
-    self.gunDrops[tool] = self.gunDrops[tool] or {}
-    local s = self.gunDrops[tool]
+    -- Найти подходящий BasePart для billboard adornee
+    local adorneePart = nil
+    if gunDrop:IsA("Model") then
+        adorneePart = gunDrop.PrimaryPart
+                   or gunDrop:FindFirstChildWhichIsA("BasePart", true)
+    elseif gunDrop:IsA("BasePart") then
+        adorneePart = gunDrop
+    end
 
     if not s.highlight or not s.highlight.Parent then
         s.highlight = Instance.new("Highlight")
         s.highlight.Name    = "AXIOM_ESP_GunHL"
-        s.highlight.Adornee = tool
-        s.highlight.Parent  = tool
+        s.highlight.Adornee = gunDrop
+        s.highlight.Parent  = gunDrop:IsA("Model") and gunDrop or (adorneePart or gunDrop)
     end
     s.highlight.FillColor           = ESPColors.GunDrop
     s.highlight.OutlineColor        = ESPColors.GunDrop
@@ -280,10 +318,10 @@ function ESP:applyGunDrop(tool)
     s.highlight.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
     s.highlight.Enabled             = true
 
-    if not s.billboard or not s.billboard.Parent then
+    if adorneePart and (not s.billboard or not s.billboard.Parent) then
         local bb = create("BillboardGui", {
             Name           = "AXIOM_ESP_GunLabel",
-            Adornee        = handle,
+            Adornee        = adorneePart,
             Size           = UDim2.new(0, 80, 0, 24),
             StudsOffset    = Vector3.new(0, 2, 0),
             AlwaysOnTop    = true,
@@ -301,28 +339,33 @@ function ESP:applyGunDrop(tool)
             }),
         })
         s.billboard = bb
-        bb.Parent = tool
+        bb.Parent = adorneePart
     end
 end
 
-function ESP:removeGunDrop(tool)
-    local s = self.gunDrops[tool]
+function ESP:removeGunDrop(gunDrop)
+    local s = self.gunDrops[gunDrop]
     if not s then return end
     if s.highlight then s.highlight:Destroy() end
     if s.billboard then s.billboard:Destroy() end
-    self.gunDrops[tool] = nil
+    self.gunDrops[gunDrop] = nil
 end
 
+-- Скан дропнутой пушки.
+-- В отличие от build 4 — ищем Model с именем "GunDrop" в нужных местах.
 function ESP:scanGunDrops()
-    for _, obj in ipairs(Workspace:GetChildren()) do
-        if self:isGunDrop(obj) and not self.gunDrops[obj] then
-            self:applyGunDrop(obj)
+    local currentDrop = findGunDrop()
+
+    -- Удаляем ESP с тех, кого больше нет / переместились
+    for obj, _ in pairs(self.gunDrops) do
+        if obj ~= currentDrop or not obj.Parent then
+            self:removeGunDrop(obj)
         end
     end
-    for tool, _ in pairs(self.gunDrops) do
-        if not tool.Parent or tool.Parent ~= Workspace then
-            self:removeGunDrop(tool)
-        end
+
+    -- Применяем ESP к текущей дропнутой пушке
+    if currentDrop and not self.gunDrops[currentDrop] then
+        self:applyGunDrop(currentDrop)
     end
 end
 
@@ -331,10 +374,10 @@ function ESP:disableAll()
         if s.highlight then s.highlight:Destroy() end
         self.tracked[player] = nil
     end
-    for tool, s in pairs(self.gunDrops) do
+    for obj, s in pairs(self.gunDrops) do
         if s.highlight then s.highlight:Destroy() end
         if s.billboard then s.billboard:Destroy() end
-        self.gunDrops[tool] = nil
+        self.gunDrops[obj] = nil
     end
 end
 
@@ -396,8 +439,6 @@ function SilentAim:getPing()
     return ok and ping or 0
 end
 
--- Быстрый предикт в стиле YARHM (запасной, простой).
--- Используется когда все продвинутые предикты выключены.
 function SilentAim:fastPredict(target, offset)
     local hrp = getHRP(target)
     if not hrp then return nil end
@@ -415,10 +456,9 @@ function SilentAim:computeAimPoint(target)
 
     local cfg = State.SilentAim
 
-    -- Если все предикты выключены — используем быстрый путь.
     if not cfg.PrioritizePing and not cfg.PredictJump and not cfg.PredictLag then
         local sizeRef = 4
-        local offset = 2.8  -- YARHM default
+        local offset = 2.8
         local pos = self:fastPredict(target, offset)
         if pos then
             local cf = hrp.CFrame
@@ -430,9 +470,7 @@ function SilentAim:computeAimPoint(target)
         return pos
     end
 
-    -- Иначе — полный предикт (твоя логика)
     local basePos = hrp.Position
-
     local horizonMs = 0
     if cfg.PrioritizePing then
         horizonMs = self:getPing() * 1000
@@ -485,9 +523,6 @@ function SilentAim:computeAimPoint(target)
 end
 
 --======================== GUN TOOL & REMOTE RESOLVER ========================--
-
--- Находим Gun tool у локального игрока.
--- Возвращает: (tool, isEquipped)
 function SilentAim:findGunTool()
     local char = LocalPlayer.Character
     if char then
@@ -508,14 +543,7 @@ function SilentAim:findGunTool()
     return nil, false
 end
 
--- Находим RemoteFunction внутри Gun.
--- Приоритет:
---   1. Gun.KnifeLocal.CreateBeam.RemoteFunction (стандартный путь MM2)
---   2. Любой потомок-RemoteFunction в Gun
---   3. Любой потомок-RemoteEvent в Gun (fallback)
--- Возвращает: (remote, kind) где kind = "function" | "event"
 function SilentAim:findGunRemote(gun)
-    -- Путь 1: стандартный MM2
     local knifeLocal = gun:FindFirstChild("KnifeLocal")
     if knifeLocal then
         local createBeam = knifeLocal:FindFirstChild("CreateBeam")
@@ -526,39 +554,52 @@ function SilentAim:findGunRemote(gun)
             end
         end
     end
-
-    -- Путь 2: любой RemoteFunction глубже
     for _, desc in ipairs(gun:GetDescendants()) do
-        if desc:IsA("RemoteFunction") then
-            return desc, "function"
-        end
+        if desc:IsA("RemoteFunction") then return desc, "function" end
     end
-
-    -- Путь 3: fallback на RemoteEvent
     for _, desc in ipairs(gun:GetDescendants()) do
-        if desc:IsA("RemoteEvent") then
-            return desc, "event"
-        end
+        if desc:IsA("RemoteEvent") then return desc, "event" end
     end
-
     return nil, nil
 end
 
+--======================== VISIBILITY CHECK (RAYCAST) ========================--
+-- Проверяем: видим ли мы цель (нет ли стен между нами).
+-- Возвращает true если видим, false если перекрыто.
+local function isTargetVisible(targetPlayer)
+    local myChar = LocalPlayer.Character
+    if not myChar then return false end
+    local myHRP = myChar:FindFirstChild("HumanoidRootPart")
+    if not myHRP then return false end
+
+    local targetHRP = getHRP(targetPlayer)
+    if not targetHRP then return false end
+
+    local origin = myHRP.Position
+    local direction = targetHRP.Position - origin
+
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = { myChar }
+
+    local hit = Workspace:Raycast(origin, direction, params)
+    if not hit then return true end  -- ничего не перекрыло
+    if hit.Instance:IsDescendantOf(targetPlayer.Character) then
+        return true  -- попали в самого таргета
+    end
+    return false
+end
+
 --======================== SHOOT IMPLEMENTATION ========================--
-function SilentAim:shoot()
+function SilentAim:shoot(forcedTarget)
     local gun, equipped = self:findGunTool()
     if not gun then
-        notify("No Gun tool found")
         return false, "no_gun"
     end
 
-    -- Если в Backpack — экипируем
     if not equipped then
         local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if not hum then
-            notify("No Humanoid")
-            return false, "no_humanoid"
-        end
+        if not hum then return false, "no_humanoid" end
         hum:EquipTool(gun)
         local waited = 0
         while waited < 0.5 do
@@ -571,37 +612,21 @@ function SilentAim:shoot()
                 break
             end
         end
-        if not equipped then
-            notify("Equip failed")
-            return false, "equip_failed"
-        end
+        if not equipped then return false, "equip_failed" end
     end
 
-    -- Цель: сначала мёрдер, иначе fallback на вражеского шерифа
-    local target = getMurderer() or getFallbackTarget()
-    if not target then
-        notify("No target (no murderer/enemy sheriff)")
-        return false, "no_target"
-    end
+    local target = forcedTarget or getMurderer() or getFallbackTarget()
+    if not target then return false, "no_target" end
 
     local aim = self:computeAimPoint(target)
-    if not aim then
-        notify("No aim point")
-        return false, "no_aim_point"
-    end
+    if not aim then return false, "no_aim_point" end
 
-    -- Ищем remote
     local remote, kind = self:findGunRemote(gun)
-    if not remote then
-        notify("No remote found inside Gun")
-        return false, "no_remote"
-    end
+    if not remote then return false, "no_remote" end
 
-    -- Поворот камеры (некоторые сервер-сайд валидации это проверяют)
     local originalCFrame = Camera.CFrame
     Camera.CFrame = CFrame.new(Camera.CFrame.Position, aim)
 
-    -- Стандартный вызов MM2: InvokeServer(1, Vector3, "AH2")
     local success, err
     if kind == "function" then
         success, err = pcall(function()
@@ -613,17 +638,125 @@ function SilentAim:shoot()
         end)
     end
 
-    -- Восстанавливаем камеру
     RunService.RenderStepped:Wait()
     Camera.CFrame = originalCFrame
 
     if not success then
-        notify("Shoot failed: " .. tostring(err))
-        warn("[AXIOM Shoot] " .. tostring(err))
-        return false, "remote_error"
+        return false, "remote_error: " .. tostring(err)
+    end
+    return true, "ok"
+end
+
+--======================== AUTO-SHOOT MODULE ========================--
+local AutoShoot = {
+    lastShotTime    = 0,
+    lastFailTime    = 0,
+    inCooldown      = false,
+}
+
+function AutoShoot:tick()
+    if not State.AutoShoot.Enabled then return end
+
+    -- Только если я шериф / у меня пушка
+    local myGun, _ = SilentAim:findGunTool()
+    if not myGun then return end
+
+    local target = getMurderer() or getFallbackTarget()
+    if not target then return end
+
+    local now = tick()
+
+    -- Если был отказ — ждём cooldown (вероятно, перезарядка)
+    if self.inCooldown then
+        if now - self.lastFailTime < State.AutoShoot.CooldownAfterFail then
+            return
+        end
+        self.inCooldown = false
     end
 
-    return true, "ok"
+    -- Базовый интервал между попытками
+    if now - self.lastShotTime < State.AutoShoot.TryInterval then
+        return
+    end
+
+    -- Visibility check
+    if State.AutoShoot.VisibilityCheck and not isTargetVisible(target) then
+        return
+    end
+
+    -- Пробуем выстрелить
+    local ok, reason = SilentAim:shoot(target)
+    self.lastShotTime = now
+
+    if not ok then
+        -- Если сервер отказал — это похоже на перезарядку, ждём
+        if reason and reason:find("remote_error") then
+            self.lastFailTime = now
+            self.inCooldown = true
+        end
+    end
+end
+
+--======================== TELEPORT MODULE ========================--
+local Teleport = {}
+
+function Teleport:toDroppedGun()
+    local gunDrop = findGunDrop()
+    if not gunDrop then
+        notify("No dropped gun on map")
+        return false
+    end
+
+    local pos = getObjectPosition(gunDrop)
+    if not pos then
+        notify("Cannot find gun position")
+        return false
+    end
+
+    local char = LocalPlayer.Character
+    if not char then
+        notify("No character")
+        return false
+    end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        notify("No HumanoidRootPart")
+        return false
+    end
+
+    local originalCFrame = hrp.CFrame
+
+    -- Телепорт к пушке
+    hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+    notify("Teleported to gun")
+
+    if State.Teleport.AutoReturn then
+        -- Ждём пока что-то появится в Backpack (т.е. пушку подняли)
+        local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+        if bp then
+            local connection
+            local picked = false
+            connection = bp.ChildAdded:Connect(function()
+                picked = true
+            end)
+            local waited = 0
+            while not picked and waited < 2 do
+                task.wait(0.1)
+                waited = waited + 0.1
+            end
+            if connection then connection:Disconnect() end
+        else
+            task.wait(0.5)
+        end
+
+        -- Возврат на исходную позицию
+        if char and char.Parent and hrp and hrp.Parent then
+            hrp.CFrame = originalCFrame
+            notify("Returned to position")
+        end
+    end
+
+    return true
 end
 
 --======================== HOOKS ========================--
@@ -633,10 +766,6 @@ setReadonly(mt, false)
 
 local oldNamecall = mt.__namecall
 
--- Хук на __namecall: при выключенном Silent Aim — прозрачно пропускает.
--- При включенном — подменяет Vector3/CFrame в аргументах FireServer/InvokeServer
--- на предсказанную позицию цели. Корректно работает с MM2-вызовом
--- :InvokeServer(1, Vector3, "AH2") — числа и строки не трогает.
 local function namecallHandler(self, ...)
     local method = getnamecallmethod()
     if State.SilentAim.Enabled and (method == "FireServer" or method == "InvokeServer") then
@@ -667,9 +796,6 @@ end
 mt.__namecall = (newcclosure and newcclosure(namecallHandler)) or namecallHandler
 setReadonly(mt, true)
 
--- Хук на Mouse.Hit / Mouse.Target — для "куда тыкаю — туда стреляет".
--- Это режим Silent Aim без явного нажатия SHOOT кнопки: игра сама думает,
--- что ты прицелился в мёрдера.
 if hookmetamethod then
     local oldIndex
     oldIndex = hookmetamethod(game, "__index", function(self, key)
@@ -694,14 +820,13 @@ end
 
 --======================== GUI HELPERS ========================--
 local function makeStroke(parent, color, thickness)
-    local s = create("UIStroke", {
-        Color        = color or Theme.Border,
-        Thickness    = thickness or 1,
+    return create("UIStroke", {
+        Color           = color or Theme.Border,
+        Thickness       = thickness or 1,
         ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-        LineJoinMode = Enum.LineJoinMode.Round,
-        Parent       = parent,
+        LineJoinMode    = Enum.LineJoinMode.Round,
+        Parent          = parent,
     })
-    return s
 end
 
 local function makeCorner(parent, radius)
@@ -720,21 +845,21 @@ local ScreenGui = create("ScreenGui", {
 })
 safeParent(ScreenGui)
 
---======================== GUI: MENU TOGGLE BUTTON ========================--
+--======================== GUI: MENU TOGGLE BUTTON (smaller) ========================--
 local MenuToggle = create("TextButton", {
     Name             = "MenuToggle",
-    Size             = UDim2.new(0, 70, 0, 26),
-    Position         = UDim2.new(0.5, -35, 0, 8),
+    Size             = UDim2.new(0, 60, 0, 20),
+    Position         = UDim2.new(0.5, -30, 0, 6),
     BackgroundColor3 = Theme.MenuToggleBg,
     BorderSizePixel  = 0,
     Text             = "MENU",
     Font             = Enum.Font.GothamBold,
-    TextSize         = 12,
+    TextSize         = 11,
     TextColor3       = Theme.TextPrimary,
     AutoButtonColor  = false,
     Parent           = ScreenGui,
 })
-makeCorner(MenuToggle, 6)
+makeCorner(MenuToggle, 5)
 makeStroke(MenuToggle, Theme.Border, 1)
 
 MenuToggle.MouseEnter:Connect(function()
@@ -748,7 +873,7 @@ end)
 local MainFrame = create("Frame", {
     Name             = "Main",
     Size             = UDim2.new(0, 560, 0, 360),
-    Position         = UDim2.new(0.5, -280, 0, 44),
+    Position         = UDim2.new(0.5, -280, 0, 36),
     BackgroundColor3 = Theme.Background,
     BorderSizePixel  = 0,
     Parent           = ScreenGui,
@@ -785,7 +910,6 @@ create("TextLabel", {
     Parent                 = TitleBar,
 })
 
--- Маленькая подпись с экзекьютором справа
 create("TextLabel", {
     Size                   = UDim2.new(0, 200, 1, 0),
     Position               = UDim2.new(1, -210, 0, 0),
@@ -798,7 +922,6 @@ create("TextLabel", {
     Parent                 = TitleBar,
 })
 
--- Drag главного окна
 do
     local dragging, dragStart, startPos
     TitleBar.InputBegan:Connect(function(input)
@@ -840,9 +963,9 @@ makeCorner(Sidebar, 6)
 makeStroke(Sidebar, Theme.Border, 1)
 
 create("UIListLayout", {
-    Padding       = UDim.new(0, 4),
-    SortOrder     = Enum.SortOrder.LayoutOrder,
-    Parent        = Sidebar,
+    Padding   = UDim.new(0, 4),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+    Parent    = Sidebar,
 })
 create("UIPadding", {
     PaddingTop    = UDim.new(0, 6),
@@ -939,17 +1062,17 @@ local function makeTab(name, layoutOrder)
     end)
 
     local page = create("Frame", {
-        Name             = "Page_" .. name,
-        Size             = UDim2.new(1, 0, 0, 0),
+        Name                   = "Page_" .. name,
+        Size                   = UDim2.new(1, 0, 0, 0),
         BackgroundTransparency = 1,
-        AutomaticSize    = Enum.AutomaticSize.Y,
-        Visible          = false,
-        Parent           = ContentScroll,
+        AutomaticSize          = Enum.AutomaticSize.Y,
+        Visible                = false,
+        Parent                 = ContentScroll,
     })
     create("UIListLayout", {
-        Padding       = UDim.new(0, 6),
-        SortOrder     = Enum.SortOrder.LayoutOrder,
-        Parent        = page,
+        Padding   = UDim.new(0, 6),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Parent    = page,
     })
 
     Tabs[name] = { button = btn, page = page }
@@ -959,10 +1082,10 @@ end
 
 --======================== WIDGETS ========================--
 local function makeToggle(parent, labelText, initial, onChange, isSub)
-    local rowHeight = isSub and 28 or 32
-    local bgColor = isSub and Theme.PanelSub or Theme.PanelAlt
+    local rowHeight   = isSub and 28 or 32
+    local bgColor     = isSub and Theme.PanelSub or Theme.PanelAlt
     local borderColor = isSub and Theme.BorderSub or Theme.Border
-    local textColor = isSub and Theme.TextSub or Theme.TextPrimary
+    local textColor   = isSub and Theme.TextSub or Theme.TextPrimary
 
     local outer = create("Frame", {
         Size                   = UDim2.new(1, 0, 0, rowHeight),
@@ -1083,16 +1206,16 @@ local function makeNumberInput(parent, labelText, minV, maxV, initial, onChange)
     })
 
     local box = create("TextBox", {
-        Size                   = UDim2.new(0, 90, 0, 20),
-        Position               = UDim2.new(1, -100, 0.5, -10),
-        BackgroundColor3       = Theme.InputBg,
-        BorderSizePixel        = 0,
-        Text                   = tostring(initial),
-        Font                   = Enum.Font.GothamMedium,
-        TextSize               = 12,
-        TextColor3             = Theme.TextPrimary,
-        ClearTextOnFocus       = false,
-        Parent                 = row,
+        Size             = UDim2.new(0, 90, 0, 20),
+        Position         = UDim2.new(1, -100, 0.5, -10),
+        BackgroundColor3 = Theme.InputBg,
+        BorderSizePixel  = 0,
+        Text             = tostring(initial),
+        Font             = Enum.Font.GothamMedium,
+        TextSize         = 12,
+        TextColor3       = Theme.TextPrimary,
+        ClearTextOnFocus = false,
+        Parent           = row,
     })
     makeCorner(box, 4)
     makeStroke(box, Theme.Border, 1)
@@ -1123,6 +1246,32 @@ local function makeSection(parent, name, layoutOrder)
         LayoutOrder            = layoutOrder or 0,
         Parent                 = parent,
     })
+end
+
+-- Кнопка-действие (для телепорта и подобного)
+local function makeActionButton(parent, labelText, onClick)
+    local btn = create("TextButton", {
+        Size             = UDim2.new(1, 0, 0, 32),
+        BackgroundColor3 = Theme.ActionBg,
+        BorderSizePixel  = 0,
+        Text             = labelText,
+        Font             = Enum.Font.GothamMedium,
+        TextSize         = 13,
+        TextColor3       = Theme.TextPrimary,
+        AutoButtonColor  = false,
+        Parent           = parent,
+    })
+    makeCorner(btn, 6)
+    makeStroke(btn, Theme.Border, 1)
+
+    btn.MouseEnter:Connect(function()
+        tween(btn, 0.1, { BackgroundColor3 = Theme.ActionHover })
+    end)
+    btn.MouseLeave:Connect(function()
+        tween(btn, 0.1, { BackgroundColor3 = Theme.ActionBg })
+    end)
+    btn.MouseButton1Click:Connect(onClick)
+    return btn
 end
 
 --======================== BUILD TABS ========================--
@@ -1156,44 +1305,68 @@ local subToggle3 = makeToggle(CombatPage, "Predict Lag", false,
     function(v) State.SilentAim.PredictLag = v end, true)
 subToggle3.frame.LayoutOrder = 5
 
-makeSection(CombatPage, "PREDICTION", 6)
+makeSection(CombatPage, "AUTO-SHOOT", 6)
+
+local autoToggle = makeToggle(CombatPage, "Auto-Shoot Murderer", false, function(v)
+    State.AutoShoot.Enabled = v
+end)
+autoToggle.frame.LayoutOrder = 7
+
+local visToggle = makeToggle(CombatPage, "Visibility Check (no walls)", true,
+    function(v) State.AutoShoot.VisibilityCheck = v end, true)
+visToggle.frame.LayoutOrder = 8
+
+makeSection(CombatPage, "PREDICTION", 9)
 
 local n1 = makeNumberInput(CombatPage, "Max Simulation Time (ms)", 30, 90,
     State.SilentAim.MaxSimulationTime,
     function(n) State.SilentAim.MaxSimulationTime = n end)
-n1.LayoutOrder = 7
+n1.LayoutOrder = 10
 
 local n2 = makeNumberInput(CombatPage, "Prediction Interval (ms)", 1, 800,
     State.SilentAim.PredictionInterval,
     function(n) State.SilentAim.PredictionInterval = n end)
-n2.LayoutOrder = 8
+n2.LayoutOrder = 11
 
 local n3 = makeNumberInput(CombatPage, "Horizontal Multiplier (%)", 90, 350,
     State.SilentAim.HMultiplier,
     function(n) State.SilentAim.HMultiplier = n end)
-n3.LayoutOrder = 9
+n3.LayoutOrder = 12
 
 local n4 = makeNumberInput(CombatPage, "Vertical Multiplier (%)", 90, 350,
     State.SilentAim.VMultiplier,
     function(n) State.SilentAim.VMultiplier = n end)
-n4.LayoutOrder = 10
+n4.LayoutOrder = 13
 
-makeSection(CombatPage, "POSITION OFFSETS", 11)
+makeSection(CombatPage, "POSITION OFFSETS", 14)
 
 local n5 = makeNumberInput(CombatPage, "X Offset (%)", -350, 350,
     State.SilentAim.OffsetX,
     function(n) State.SilentAim.OffsetX = n end)
-n5.LayoutOrder = 12
+n5.LayoutOrder = 15
 
 local n6 = makeNumberInput(CombatPage, "Y Offset (%)", -350, 350,
     State.SilentAim.OffsetY,
     function(n) State.SilentAim.OffsetY = n end)
-n6.LayoutOrder = 13
+n6.LayoutOrder = 16
 
 local n7 = makeNumberInput(CombatPage, "Z Offset (%)", -350, 350,
     State.SilentAim.OffsetZ,
     function(n) State.SilentAim.OffsetZ = n end)
-n7.LayoutOrder = 14
+n7.LayoutOrder = 17
+
+-- MISC
+local MiscPage = makeTab("Misc", 3)
+makeSection(MiscPage, "TELEPORTS", 1)
+
+local tpBtn = makeActionButton(MiscPage, "Teleport to Dropped Gun", function()
+    task.spawn(function() Teleport:toDroppedGun() end)
+end)
+tpBtn.LayoutOrder = 2
+
+local autoReturnToggle = makeToggle(MiscPage, "Auto-Return After Pickup", true,
+    function(v) State.Teleport.AutoReturn = v end, true)
+autoReturnToggle.frame.LayoutOrder = 3
 
 showTab("Visuals")
 
@@ -1295,6 +1468,15 @@ RunService.Heartbeat:Connect(function()
     SilentAim:trackVelocities()
 end)
 
+-- Auto-Shoot tick
+task.spawn(function()
+    while ScreenGui.Parent do
+        pcall(function() AutoShoot:tick() end)
+        task.wait(0.1)
+    end
+end)
+
+-- ESP tick
 task.spawn(function()
     while ScreenGui.Parent do
         ESP:tick()
@@ -1302,5 +1484,5 @@ task.spawn(function()
     end
 end)
 
-notify("AXIOM build 4 loaded on " .. Executor.name, 4)
-print("[AXIOM] build 4 loaded. Executor: " .. Executor.name)
+notify("AXIOM build 5 loaded on " .. Executor.name, 4)
+print("[AXIOM] build 5 loaded. Executor: " .. Executor.name)
