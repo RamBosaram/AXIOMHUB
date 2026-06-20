@@ -1,6 +1,4 @@
--- AXIOM | Murder Mystery 2 Edition
--- Repurposed and rewritten from YARHM 1.21 (Aetherion, open source) for educational/CTF use
--- Single-file, no external module dependencies. Drop in executor and run.
+
 
 if not game:IsLoaded() then
     game:GetService("StarterGui"):SetCore("SendNotification", {
