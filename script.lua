@@ -675,7 +675,8 @@ local tabPad = Instance.new("UIPadding", TabBar)
 tabPad.PaddingTop = UDim.new(0, 8)
 tabPad.PaddingLeft = UDim.new(0, 6)
 tabPad.PaddingRight = UDim.new(0, 6)
-
+local tabBarCorner = Instance.new("UICorner", TabBar)
+tabBarCorner.CornerRadius = UDim.new(0, 14)
 local Content = Instance.new("Frame", Menu)
 Content.Position = UDim2.new(0, 110, 0, 40)
 Content.Size = UDim2.new(1, -110, 1, -40)
@@ -1082,18 +1083,40 @@ local function addSlider(pageData, text, min, max, default, step, callback)
         pcall(callback, value)
     end
 
+    -- Dead-zone: слайдер активируется только если палец двинулся горизонтально
+    -- больше чем на 8px, либо удерживается на месте больше 150мс.
+    -- Это позволяет нормально листать страницу через слайдер не задевая его.
+    local DRAG_THRESHOLD = 8
+    local HOLD_MS = 150
+    local startPos = nil
+    local startTime = 0
+    local engaged = false
+    local engageTask = nil
+
     track.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
             if activeInput then return end
             activeInput = input
-            update(input.Position)
+            startPos = input.Position
+            startTime = tick()
+            engaged = false
+
+            -- Через HOLD_MS активируем слайдер если палец не сдвинулся вертикально
+            engageTask = task.delay(HOLD_MS / 1000, function()
+                if activeInput == input and not engaged then
+                    engaged = true
+                    update(input.Position)
+                end
+            end)
 
             local stateChange
             stateChange = input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     stateChange:Disconnect()
+                    if engageTask then task.cancel(engageTask) engageTask = nil end
                     if activeInput == input then activeInput = nil end
+                    engaged = false
                 end
             end)
         end
@@ -1103,7 +1126,25 @@ local function addSlider(pageData, text, min, max, default, step, callback)
         if input ~= activeInput then return end
         if input.UserInputType ~= Enum.UserInputType.MouseMovement
         and input.UserInputType ~= Enum.UserInputType.Touch then return end
-        update(input.Position)
+
+        if not engaged then
+            local delta = input.Position - startPos
+            -- Если вертикальное движение больше горизонтального — пользователь листает страницу
+            if math.abs(delta.Y) > math.abs(delta.X) and math.abs(delta.Y) > DRAG_THRESHOLD then
+                activeInput = nil
+                if engageTask then task.cancel(engageTask) engageTask = nil end
+                return
+            end
+            -- Если горизонтальное движение превысило порог — это слайдер
+            if math.abs(delta.X) > DRAG_THRESHOLD then
+                engaged = true
+                if engageTask then task.cancel(engageTask) engageTask = nil end
+            end
+        end
+
+        if engaged then
+            update(input.Position)
+        end
     end)
 
     return row
@@ -1783,7 +1824,7 @@ end
 ----------------------------------------------------------------
 -- VISUAL PAGE
 ----------------------------------------------------------------
-addSection(VisualPage, "ESPs")
+addSection(VisualPage, "ESP")
 
 addToggle(VisualPage, "Players (roles)", false, function(s)
     State.playerESP = s
@@ -1908,27 +1949,47 @@ end)
 -- COMBAT PAGE (Sheriff блок сверху, Murderer блок снизу)
 ----------------------------------------------------------------
 -- ===================== SHERIFF SECTION =====================
+-- Серый заголовок "Sheriff" по центру
 local sheriffHeader = Instance.new("TextLabel", CombatPage.page)
-sheriffHeader.Size = UDim2.new(1, -10, 0, 30)
-sheriffHeader.BackgroundColor3 = Color3.fromRGB(20, 30, 50)
-sheriffHeader.BackgroundTransparency = 0.3
-sheriffHeader.BorderSizePixel = 0
-sheriffHeader.Font = Enum.Font.GothamBold
-sheriffHeader.Text = "═══  SHERIFF  ═══"
-sheriffHeader.TextColor3 = Color3.fromRGB(90, 180, 255)
-sheriffHeader.TextSize = 14
+sheriffHeader.Size = UDim2.new(1, -10, 0, 22)
+sheriffHeader.BackgroundTransparency = 1
+sheriffHeader.Font = Enum.Font.GothamMedium
+sheriffHeader.Text = "Sheriff"
+sheriffHeader.TextColor3 = Color3.fromRGB(170, 170, 175)
+sheriffHeader.TextSize = 13
 sheriffHeader.TextXAlignment = Enum.TextXAlignment.Center
 CombatPage.order = CombatPage.order + 1
 sheriffHeader.LayoutOrder = CombatPage.order
-Instance.new("UICorner", sheriffHeader).CornerRadius = UDim.new(0, 6)
 
-local sheriffHeaderStroke = Instance.new("UIStroke", sheriffHeader)
-sheriffHeaderStroke.Color = Color3.fromRGB(90, 180, 255)
-sheriffHeaderStroke.Thickness = 1
-sheriffHeaderStroke.Transparency = 0.5
+-- Контейнер с рамкой для всех функций Шерифа
+local sheriffBox = Instance.new("Frame", CombatPage.page)
+sheriffBox.Size = UDim2.new(1, -10, 0, 0)
+sheriffBox.AutomaticSize = Enum.AutomaticSize.Y
+sheriffBox.BackgroundColor3 = Theme.secondary
+sheriffBox.BackgroundTransparency = 0.4
+sheriffBox.BorderSizePixel = 0
+CombatPage.order = CombatPage.order + 1
+sheriffBox.LayoutOrder = CombatPage.order
+Instance.new("UICorner", sheriffBox).CornerRadius = UDim.new(0, 10)
 
--- Дальше все Sheriff-настройки используют CombatPage вместо SheriffPage
-local SheriffPage = CombatPage
+local sheriffBoxStroke = Instance.new("UIStroke", sheriffBox)
+sheriffBoxStroke.Color = Color3.fromRGB(90, 180, 255)
+sheriffBoxStroke.Thickness = 1.2
+sheriffBoxStroke.Transparency = 0.4
+
+local sheriffBoxPad = Instance.new("UIPadding", sheriffBox)
+sheriffBoxPad.PaddingTop = UDim.new(0, 8)
+sheriffBoxPad.PaddingBottom = UDim.new(0, 8)
+sheriffBoxPad.PaddingLeft = UDim.new(0, 6)
+sheriffBoxPad.PaddingRight = UDim.new(0, 6)
+
+local sheriffBoxLayout = Instance.new("UIListLayout", sheriffBox)
+sheriffBoxLayout.Padding = UDim.new(0, 6)
+sheriffBoxLayout.SortOrder = Enum.SortOrder.LayoutOrder
+sheriffBoxLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+-- SheriffPage теперь указывает на sheriffBox (а не на CombatPage)
+local SheriffPage = {page = sheriffBox, order = 0, button = CombatPage.button}
 
 addSection(SheriffPage, "Combat")
 
@@ -1997,33 +2058,54 @@ addToggle(SheriffPage, "Auto-grab dropped gun", false, function(s) State.autoGet
 -- MURDERER SECTION (внутри Combat tab, ниже Sheriff)
 ----------------------------------------------------------------
 -- Разделитель + заголовок Убийцы
+-- Пустой промежуток между Шерифом и Убийцей
 local murdererSpacer = Instance.new("Frame", CombatPage.page)
-murdererSpacer.Size = UDim2.new(1, -10, 0, 12)
+murdererSpacer.Size = UDim2.new(1, -10, 0, 10)
 murdererSpacer.BackgroundTransparency = 1
 CombatPage.order = CombatPage.order + 1
 murdererSpacer.LayoutOrder = CombatPage.order
 
+-- Серый заголовок "Murderer" по центру
 local murdererHeader = Instance.new("TextLabel", CombatPage.page)
-murdererHeader.Size = UDim2.new(1, -10, 0, 30)
-murdererHeader.BackgroundColor3 = Color3.fromRGB(50, 20, 25)
-murdererHeader.BackgroundTransparency = 0.3
-murdererHeader.BorderSizePixel = 0
-murdererHeader.Font = Enum.Font.GothamBold
-murdererHeader.Text = "═══  MURDERER  ═══"
-murdererHeader.TextColor3 = Color3.fromRGB(255, 80, 100)
-murdererHeader.TextSize = 14
+murdererHeader.Size = UDim2.new(1, -10, 0, 22)
+murdererHeader.BackgroundTransparency = 1
+murdererHeader.Font = Enum.Font.GothamMedium
+murdererHeader.Text = "Murderer"
+murdererHeader.TextColor3 = Color3.fromRGB(170, 170, 175)
+murdererHeader.TextSize = 13
 murdererHeader.TextXAlignment = Enum.TextXAlignment.Center
 CombatPage.order = CombatPage.order + 1
 murdererHeader.LayoutOrder = CombatPage.order
-Instance.new("UICorner", murdererHeader).CornerRadius = UDim.new(0, 6)
 
-local murdererHeaderStroke = Instance.new("UIStroke", murdererHeader)
-murdererHeaderStroke.Color = Color3.fromRGB(255, 80, 100)
-murdererHeaderStroke.Thickness = 1
-murdererHeaderStroke.Transparency = 0.5
+-- Контейнер с рамкой для всех функций Убийцы
+local murdererBox = Instance.new("Frame", CombatPage.page)
+murdererBox.Size = UDim2.new(1, -10, 0, 0)
+murdererBox.AutomaticSize = Enum.AutomaticSize.Y
+murdererBox.BackgroundColor3 = Theme.secondary
+murdererBox.BackgroundTransparency = 0.4
+murdererBox.BorderSizePixel = 0
+CombatPage.order = CombatPage.order + 1
+murdererBox.LayoutOrder = CombatPage.order
+Instance.new("UICorner", murdererBox).CornerRadius = UDim.new(0, 10)
 
--- Псевдоним: всё что писалось в MurdererPage теперь идёт в CombatPage
-local MurdererPage = CombatPage
+local murdererBoxStroke = Instance.new("UIStroke", murdererBox)
+murdererBoxStroke.Color = Color3.fromRGB(255, 80, 100)
+murdererBoxStroke.Thickness = 1.2
+murdererBoxStroke.Transparency = 0.4
+
+local murdererBoxPad = Instance.new("UIPadding", murdererBox)
+murdererBoxPad.PaddingTop = UDim.new(0, 8)
+murdererBoxPad.PaddingBottom = UDim.new(0, 8)
+murdererBoxPad.PaddingLeft = UDim.new(0, 6)
+murdererBoxPad.PaddingRight = UDim.new(0, 6)
+
+local murdererBoxLayout = Instance.new("UIListLayout", murdererBox)
+murdererBoxLayout.Padding = UDim.new(0, 6)
+murdererBoxLayout.SortOrder = Enum.SortOrder.LayoutOrder
+murdererBoxLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+-- MurdererPage теперь указывает на murdererBox
+local MurdererPage = {page = murdererBox, order = 0, button = CombatPage.button}
 
 addSection(MurdererPage, "Knife throw")
 
