@@ -41,6 +41,9 @@ local SAVED_KEYS = {
     -- Sheriff base
     "sheriffWallCheck",
     "autoUnequipGun",
+    "sheriffCameraTurn",
+    "sheriffShiftLock",
+    "sheriffAimlock",
     "shootOffset",
     "offsetPingMult",
     -- Sheriff prediction
@@ -56,6 +59,9 @@ local SAVED_KEYS = {
     "sheriffOffsetZ",
     -- Murderer base
     "murdererWallCheck",
+    "murdererShiftLock",
+    "murdererAimlock",
+    "murdererAimSheriff",
     "knifeFOVEnabled",
     "knifeFOV",
     "knifeOffset",
@@ -143,11 +149,14 @@ local State = {
     hideMeESP        = false,
     roundTimerOn     = false,
 
-    -- Sheriff combat
+  -- Sheriff combat
     autoShoot          = false,
     instakillShoot     = false,
     sheriffWallCheck   = true,
     autoUnequipGun     = true,
+    sheriffCameraTurn  = false,
+    sheriffShiftLock   = false,
+    sheriffAimlock     = false,
     shootOffset        = 2.8,
     offsetPingMult     = 1.0,
 
@@ -163,12 +172,15 @@ local State = {
     sheriffOffsetY         = 0,
     sheriffOffsetZ         = 0,
 
-    -- Murderer combat
+  -- Murderer combat
     loopKnifeThrow       = false,
     spawnKnifeAtPlayer   = false,
     killAuraOn           = false,
     autoGetGun           = false,
     murdererWallCheck    = true,
+    murdererShiftLock    = false,
+    murdererAimlock      = false,
+    murdererAimSheriff   = false,
     knifeFOVEnabled      = false,
     knifeFOV             = 200,
     knifeOffset          = 3.5,
@@ -2010,7 +2022,94 @@ workspace.DescendantRemoving:Connect(function(ch)
         reloadPlayerESP()
     end
 end)
+----------------------------------------------------------------
+-- CAMERA / AIM ENGINE
+----------------------------------------------------------------
+-- Поворачивает камеру на цель (плавно). Используется в shootMurderer.
+local function turnCameraTo(targetPos, smooth)
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    local origin = cam.CFrame.Position
+    local target = CFrame.new(origin, targetPos)
+    if smooth then
+        TweenService:Create(cam, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {CFrame = target}):Play()
+    else
+        cam.CFrame = target
+    end
+end
 
+-- Активен ли shift lock у LocalPlayer
+local function isShiftLockActive()
+    -- Способ 1: MouseBehavior зафиксировано в центре
+    if UIS.MouseBehavior == Enum.MouseBehavior.LockCenter then
+        return true
+    end
+    -- Способ 2 (мобайл): иконка shift lock включена и Humanoid.CameraOffset смещён
+    local char = safeGetCharacter()
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum and hum.CameraOffset.X ~= 0 then return true end
+    return false
+end
+
+-- Принудительно поворачивает персонажа и камеру на цель
+-- Используется в Aimlock и Shift Lock targeting
+local function lockOnto(targetPlayer)
+    if not targetPlayer or not targetPlayer.Character then return end
+    local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not targetHRP then return end
+
+    local myHRP = safeGetHRP()
+    local cam = workspace.CurrentCamera
+    if not myHRP or not cam then return end
+
+    -- Поворот камеры на цель
+    local camPos = cam.CFrame.Position
+    cam.CFrame = CFrame.new(camPos, targetHRP.Position)
+
+    -- Поворот персонажа в горизонтальной плоскости на цель
+    local from = myHRP.Position
+    local to = Vector3.new(targetHRP.Position.X, from.Y, targetHRP.Position.Z)
+    myHRP.CFrame = CFrame.new(from, to)
+end
+
+-- Главный цикл shift lock / aimlock: проверяет тогглы каждый кадр и
+-- применяет наведение. Шерифские и убийцинские тогглы — независимы.
+RunService.RenderStepped:Connect(function()
+    local isSheriff = findSheriff() == LocalPlayer
+    local isMurderer = findMurderer() == LocalPlayer
+
+    -- SHERIFF aim logic
+    if isSheriff then
+        local needAim = State.sheriffAimlock
+            or (State.sheriffShiftLock and isShiftLockActive())
+        if needAim then
+            local murd = findMurderer()
+            if murd and murd.Character then
+                lockOnto(murd)
+            end
+        end
+    end
+
+    -- MURDERER aim logic
+    if isMurderer then
+        local needAim = State.murdererAimlock
+            or (State.murdererShiftLock and isShiftLockActive())
+        if needAim then
+            local target
+            if State.murdererAimSheriff then
+                target = findSheriff()
+                if not target or not target.Character then
+                    target = findNearestPlayer()
+                end
+            else
+                target = findNearestPlayer()
+            end
+            if target and target.Character then
+                lockOnto(target)
+            end
+        end
+    end
+end)
 ----------------------------------------------------------------
 -- SHERIFF SHOOT
 ----------------------------------------------------------------
@@ -2061,8 +2160,12 @@ local function shootMurderer(force)
         }
     end
 
-    local gun = char:WaitForChild("Gun", 1)
+  local gun = char:WaitForChild("Gun", 1)
     if gun and gun:FindFirstChild("Shoot") then
+        -- Перед выстрелом поворачиваем камеру на цель (если включено)
+        if State.sheriffCameraTurn then
+            turnCameraTo(targetHRP.Position, true)
+        end
         gun.Shoot:FireServer(unpack(args))
 
         if State.autoUnequipGun then
@@ -2302,7 +2405,9 @@ addToggle(SheriffPage, "Auto-shoot murderer", false, function(s) State.autoShoot
 addToggle(SheriffPage, "Instakill shoot", false, function(s) State.instakillShoot = s end)
 addToggle(SheriffPage, "Wall check (Sheriff)", true, function(s) State.sheriffWallCheck = s end)
 addToggle(SheriffPage, "Auto-unequip after shot", true, function(s) State.autoUnequipGun = s end)
-
+addToggle(SheriffPage, "Camera turn on shoot", false, function(s) State.sheriffCameraTurn = s end)
+addToggle(SheriffPage, "Shift Lock → murderer", false, function(s) State.sheriffShiftLock = s end)
+addToggle(SheriffPage, "Aimlock → murderer", false, function(s) State.sheriffAimlock = s end)
 -- Auto-shoot loop
 task.spawn(function()
     while task.wait(0.5) do
@@ -2405,7 +2510,9 @@ addButton(MurdererPage, "Throw knife at nearest", function() knifeThrow(false, f
 addToggle(MurdererPage, "Auto knife throw", false, function(s) State.loopKnifeThrow = s end)
 addToggle(MurdererPage, "Spawn knife near victim", false, function(s) State.spawnKnifeAtPlayer = s end)
 addToggle(MurdererPage, "Wall check (Murderer)", true, function(s) State.murdererWallCheck = s end)
-
+addToggle(MurdererPage, "Shift Lock → nearest", false, function(s) State.murdererShiftLock = s end)
+addToggle(MurdererPage, "Aimlock → nearest", false, function(s) State.murdererAimlock = s end)
+addToggle(MurdererPage, "Aimlock priority: Sheriff", false, function(s) State.murdererAimSheriff = s end)
 -- Auto knife throw loop
 task.spawn(function()
     while task.wait(1.5) do
