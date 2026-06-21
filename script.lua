@@ -25,7 +25,7 @@ local UIS           = game:GetService("UserInputService")
 local CoreGui       = game:GetService("CoreGui")
 local HttpService   = game:GetService("HttpService")
 local TextChatSvc   = game:GetService("TextChatService")
-
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 ----------------------------------------------------------------
 -- CONFIG PERSISTENCE
@@ -1130,13 +1130,32 @@ local function addSlider(pageData, text, min, max, default, step, callback)
 
     local lbl = Instance.new("TextLabel", frame)
     lbl.Position = UDim2.new(0, 10, 0, 4)
-    lbl.Size = UDim2.new(1, -20, 0, 16)
+    lbl.Size = UDim2.new(1, -68, 0, 16)
     lbl.BackgroundTransparency = 1
     lbl.Font = Theme.font
-    lbl.Text = text..": "..tostring(default)
+    lbl.Text = text
     lbl.TextColor3 = Theme.text
     lbl.TextSize = 11
     lbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    -- TextBox для ручного ввода значения (справа от названия)
+    local valueBox = Instance.new("TextBox", frame)
+    valueBox.AnchorPoint = Vector2.new(1, 0)
+    valueBox.Position = UDim2.new(1, -8, 0, 3)
+    valueBox.Size = UDim2.fromOffset(50, 18)
+    valueBox.BackgroundColor3 = Theme.primary
+    valueBox.BorderSizePixel = 0
+    valueBox.Font = Enum.Font.GothamMedium
+    valueBox.TextColor3 = Theme.text
+    valueBox.TextSize = 11
+    valueBox.ClearTextOnFocus = true
+    valueBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 150)
+    Instance.new("UICorner", valueBox).CornerRadius = UDim.new(0, 4)
+
+    local valueBoxStroke = Instance.new("UIStroke", valueBox)
+    valueBoxStroke.Color = Theme.accentDeep
+    valueBoxStroke.Thickness = 1
+    valueBoxStroke.Transparency = 0.5
 
     local track = Instance.new("Frame", frame)
     track.Position = UDim2.new(0, 10, 1, -14)
@@ -1158,31 +1177,60 @@ local function addSlider(pageData, text, min, max, default, step, callback)
         ColorSequenceKeypoint.new(1, Theme.accentAlt),
     })
 
-    -- per-input slider drag (multi-touch safe)
-    local activeInput = nil
+    -- Формат отображения значения (целое или с десятичными)
+    local function formatValue(v)
+        if step and step >= 1 then
+            return tostring(math.floor(v))
+        else
+            return string.format("%.2f", v)
+        end
+    end
 
-    local function update(inputPos)
-        local rel = math.clamp((inputPos.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
-        local value = min + (max - min) * rel
+    -- Обновляет визуал слайдера и TextBox для заданного значения
+    local function applyValue(value, silent)
+        value = math.clamp(value, min, max)
         if step and step > 0 then
             value = math.floor(value / step + 0.5) * step
         end
-        value = math.clamp(value, min, max)
         fill.Size = UDim2.new((value - min) / (max - min), 0, 1, 0)
-        lbl.Text = text..": "..(step and step >= 1 and math.floor(value) or string.format("%.2f", value))
-        pcall(callback, value)
-        ConfigManager:save(State)
+        valueBox.Text = formatValue(value)
+        if not silent then
+            pcall(callback, value)
+            ConfigManager:save(State)
+        end
     end
 
-    -- Dead-zone: слайдер активируется только если палец двинулся горизонтально
-    -- больше чем на 8px, либо удерживается на месте больше 150мс.
-    -- Это позволяет нормально листать страницу через слайдер не задевая его.
+    valueBox.Text = formatValue(default)
+
+    -- Ручной ввод через TextBox
+    valueBox.FocusLost:Connect(function(enterPressed)
+        local n = tonumber(valueBox.Text)
+        if not n then
+            -- невалидный ввод — вернуть последнее валидное значение из fill
+            local rel = fill.Size.X.Scale
+            local current = min + (max - min) * rel
+            if step and step > 0 then
+                current = math.floor(current / step + 0.5) * step
+            end
+            valueBox.Text = formatValue(current)
+            return
+        end
+        applyValue(n)
+    end)
+
+    -- Dead-zone + drag для движения по полоске (без изменений с прошлого патча)
     local DRAG_THRESHOLD = 8
     local HOLD_MS = 150
+    local activeInput = nil
     local startPos = nil
-    local startTime = 0
     local engaged = false
     local engageTask = nil
+
+    local function updateFromInput(inputPos)
+        local rel = math.clamp((inputPos.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+        local value = min + (max - min) * rel
+        applyValue(value)
+    end
 
     track.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
@@ -1190,14 +1238,12 @@ local function addSlider(pageData, text, min, max, default, step, callback)
             if activeInput then return end
             activeInput = input
             startPos = input.Position
-            startTime = tick()
             engaged = false
 
-            -- Через HOLD_MS активируем слайдер если палец не сдвинулся вертикально
             engageTask = task.delay(HOLD_MS / 1000, function()
                 if activeInput == input and not engaged then
                     engaged = true
-                    update(input.Position)
+                    updateFromInput(input.Position)
                 end
             end)
 
@@ -1220,13 +1266,11 @@ local function addSlider(pageData, text, min, max, default, step, callback)
 
         if not engaged then
             local delta = input.Position - startPos
-            -- Если вертикальное движение больше горизонтального — пользователь листает страницу
             if math.abs(delta.Y) > math.abs(delta.X) and math.abs(delta.Y) > DRAG_THRESHOLD then
                 activeInput = nil
                 if engageTask then task.cancel(engageTask) engageTask = nil end
                 return
             end
-            -- Если горизонтальное движение превысило порог — это слайдер
             if math.abs(delta.X) > DRAG_THRESHOLD then
                 engaged = true
                 if engageTask then task.cancel(engageTask) engageTask = nil end
@@ -1234,7 +1278,7 @@ local function addSlider(pageData, text, min, max, default, step, callback)
         end
 
         if engaged then
-            update(input.Position)
+            updateFromInput(input.Position)
         end
     end)
 
@@ -1679,58 +1723,237 @@ end
 ----------------------------------------------------------------
 -- ESP RELOAD
 ----------------------------------------------------------------
-local function reloadPlayerESP()
-    ESP:RemoveGroup("players")
-    if not State.playerESP then return end
 
-    local murd = findMurderer()
-    local sher = findSheriff()
+----------------------------------------------------------------
+-- PLAYER ESP (роли через GetPlayerData, distance + nick over head)
+-- Credits to Kiriot22 for role-getter logic / FeIix-style ESP
+----------------------------------------------------------------
+local PlayerESP = {}
+PlayerESP.huds = {}        -- player -> BillboardGui с distance + nick
+PlayerESP.highlights = {}  -- player -> Highlight instance
+PlayerESP.currentRoles = {Murder = nil, Sheriff = nil, Hero = nil}
 
-    for _, p in ipairs(Players:GetPlayers()) do
-        if not p.Character then continue end
-        if p == LocalPlayer and State.hideMeESP then continue end
+-- Цвета ролей (применяются и к Highlight, и к обводке текста в BillboardGui)
+local ROLE_COLORS = {
+    Murderer = Color3.fromRGB(225, 0, 0),
+    Sheriff  = Color3.fromRGB(0, 0, 225),
+    Hero     = Color3.fromRGB(255, 250, 0),
+    Innocent = Color3.fromRGB(0, 225, 0),
+}
 
-        local opts = {group = "players"}
-        if p == murd then
-            opts.color = Color3.fromRGB(255, 60, 80)
-            opts.showArrow = true
-            opts.showDistance = true
-            opts.arrowSize = UDim2.fromOffset(36, 36)
-        elseif p == sher then
-            opts.color = Color3.fromRGB(90, 180, 255)
-        else
-            opts.color = Color3.fromRGB(120, 255, 140)
-        end
-        ESP:Add(p.Character, opts)
-    end
+-- Lighter outline color (text outline = чуть светлее заливки Highlight)
+local function lightenColor(c, amount)
+    amount = amount or 0.35
+    return Color3.new(
+        math.min(1, c.R + amount),
+        math.min(1, c.G + amount),
+        math.min(1, c.B + amount)
+    )
 end
 
-task.spawn(function()
-    while task.wait(1) do
-        if State.playerESP then reloadPlayerESP() end
+-- Получает текущую таблицу ролей с сервера
+local function fetchRoles()
+    local rf = ReplicatedStorage:FindFirstChild("GetPlayerData", true)
+    if not rf or not rf:IsA("RemoteFunction") then return nil end
+    local ok, data = pcall(function() return rf:InvokeServer() end)
+    if not ok or type(data) ~= "table" then return nil end
+    return data
+end
+
+-- Получает роль игрока из таблицы
+local function getPlayerRole(player, rolesTable)
+    if not rolesTable then return "Innocent" end
+    local info = rolesTable[player.Name]
+    if not info then return "Innocent" end
+    return info.Role or "Innocent"
+end
+
+-- Жив ли игрок (по данным сервера)
+local function isPlayerAlive(player, rolesTable)
+    if not rolesTable then return true end
+    local info = rolesTable[player.Name]
+    if not info then return true end
+    return not info.Killed and not info.Dead
+end
+
+-- Создаёт BillboardGui над игроком: ник + distance, обводка цвета роли
+local function createHUD(player)
+    if PlayerESP.huds[player] then return PlayerESP.huds[player] end
+    if not player.Character then return nil end
+    local head = player.Character:FindFirstChild("Head")
+    if not head then return nil end
+
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "AXIOM_ESP_HUD"
+    bb.AlwaysOnTop = true
+    bb.Size = UDim2.fromOffset(200, 50)
+    bb.StudsOffset = Vector3.new(0, 2.5, 0)
+    bb.Adornee = head
+    bb.Parent = ESPGui
+
+    local distLabel = Instance.new("TextLabel", bb)
+    distLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    distLabel.Position = UDim2.new(0, 0, 0, 0)
+    distLabel.BackgroundTransparency = 1
+    distLabel.Font = Enum.Font.GothamBold
+    distLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    distLabel.TextSize = 13
+    distLabel.Text = "Distance: 0"
+    distLabel.TextStrokeTransparency = 0
+    distLabel.TextStrokeColor3 = ROLE_COLORS.Innocent
+
+    local nickLabel = Instance.new("TextLabel", bb)
+    nickLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    nickLabel.Position = UDim2.new(0, 0, 0.5, 0)
+    nickLabel.BackgroundTransparency = 1
+    nickLabel.Font = Enum.Font.GothamBold
+    nickLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    nickLabel.TextSize = 13
+    nickLabel.Text = player.Name
+    nickLabel.TextStrokeTransparency = 0
+    nickLabel.TextStrokeColor3 = ROLE_COLORS.Innocent
+
+    PlayerESP.huds[player] = {gui = bb, dist = distLabel, nick = nickLabel}
+    return PlayerESP.huds[player]
+end
+
+-- Создаёт Highlight для игрока
+local function createHighlight(player)
+    if PlayerESP.highlights[player] then return PlayerESP.highlights[player] end
+    if not player.Character then return nil end
+    local hl = Instance.new("Highlight")
+    hl.Name = "AXIOM_ESP_HL"
+    hl.Adornee = player.Character
+    hl.FillColor = ROLE_COLORS.Innocent
+    hl.OutlineColor = lightenColor(ROLE_COLORS.Innocent, 0.35)
+    hl.FillTransparency = 0.6
+    hl.OutlineTransparency = 0
+    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Parent = ESPGui
+    PlayerESP.highlights[player] = hl
+    return hl
+end
+
+-- Удаляет ESP для игрока
+local function removePlayerESP(player)
+    local h = PlayerESP.huds[player]
+    if h and h.gui then h.gui:Destroy() end
+    PlayerESP.huds[player] = nil
+
+    local hl = PlayerESP.highlights[player]
+    if hl then hl:Destroy() end
+    PlayerESP.highlights[player] = nil
+end
+
+-- Полная очистка всего player ESP
+local function clearAllPlayerESP()
+    for player in pairs(PlayerESP.huds) do removePlayerESP(player) end
+    for player in pairs(PlayerESP.highlights) do removePlayerESP(player) end
+end
+
+function reloadPlayerESP()
+    if not State.playerESP then
+        clearAllPlayerESP()
+        return
+    end
+    -- Создаёт/обновит при следующем тике RenderStepped
+end
+
+-- Главный цикл: обновляет роли, цвета, distance, HUD каждый кадр
+RunService.RenderStepped:Connect(function()
+    if not State.playerESP then return end
+
+    local roles = fetchRoles()
+    local hrp = safeGetHRP()
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        -- Скип самого себя если включён hideMeESP
+        if player == LocalPlayer and State.hideMeESP then
+            removePlayerESP(player)
+            continue
+        end
+
+        if not player.Character then
+            removePlayerESP(player)
+            continue
+        end
+
+        local role = getPlayerRole(player, roles)
+        local alive = isPlayerAlive(player, roles)
+
+        -- Логика цветов:
+        -- Sheriff живой → синий
+        -- Murderer живой → красный
+        -- Hero живой при мёртвом шерифе → жёлтый
+        -- Иначе зелёный
+        local color = ROLE_COLORS.Innocent
+        if role == "Sheriff" and alive then
+            color = ROLE_COLORS.Sheriff
+        elseif role == "Murderer" and alive then
+            color = ROLE_COLORS.Murderer
+        elseif role == "Hero" and alive then
+            -- проверяем шерифа на жизнь
+            local sheriffPlayer = nil
+            if roles then
+                for name, info in pairs(roles) do
+                    if info.Role == "Sheriff" then
+                        sheriffPlayer = Players:FindFirstChild(name)
+                        break
+                    end
+                end
+            end
+            if sheriffPlayer and not isPlayerAlive(sheriffPlayer, roles) then
+                color = ROLE_COLORS.Hero
+            else
+                color = ROLE_COLORS.Innocent
+            end
+        end
+
+        -- Highlight
+        local hl = PlayerESP.highlights[player]
+        if not hl then hl = createHighlight(player) end
+        if hl then
+            hl.FillColor = color
+            hl.OutlineColor = lightenColor(color, 0.35)
+            hl.Adornee = player.Character
+        end
+
+        -- HUD (distance + nick)
+        local hud = PlayerESP.huds[player]
+        if not hud then hud = createHUD(player) end
+        if hud and hud.gui then
+            local head = player.Character:FindFirstChild("Head")
+            if head then
+                hud.gui.Adornee = head
+                hud.dist.TextStrokeColor3 = color
+                hud.nick.TextStrokeColor3 = color
+                if hrp then
+                    local d = (hrp.Position - head.Position).Magnitude
+                    hud.dist.Text = string.format("Distance: %d", math.floor(d))
+                else
+                    hud.dist.Text = "Distance: ?"
+                end
+                hud.nick.Text = player.Name
+            end
+        end
     end
 end)
 
-local function hookPlayer(p)
-    local function bind(char)
-        if not char then return end
-        char.ChildAdded:Connect(function(c)
-            if State.playerESP and (c.Name == "Knife" or c.Name == "Gun") then
-                reloadPlayerESP()
-            end
-        end)
-        char.ChildRemoved:Connect(function(c)
-            if State.playerESP and (c.Name == "Knife" or c.Name == "Gun") then
-                reloadPlayerESP()
-            end
-        end)
-    end
-    bind(p.Character)
-    p.CharacterAdded:Connect(bind)
+-- Очистка при выходе игрока
+Players.PlayerRemoving:Connect(function(p)
+    removePlayerESP(p)
+end)
+
+-- Сброс при респавне (чтобы новый Character получил свежий Highlight)
+local function hookCharacter(p)
+    p.CharacterAdded:Connect(function()
+        removePlayerESP(p)
+        -- следующий RenderStepped пересоздаст
+    end)
 end
 
-for _, p in ipairs(Players:GetPlayers()) do hookPlayer(p) end
-Players.PlayerAdded:Connect(hookPlayer)
+for _, p in ipairs(Players:GetPlayers()) do hookCharacter(p) end
+Players.PlayerAdded:Connect(hookCharacter)
 
 workspace.ChildAdded:Connect(function(ch)
     if ch == getMap() and State.playerESP then
