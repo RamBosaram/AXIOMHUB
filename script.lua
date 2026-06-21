@@ -27,7 +27,108 @@ local HttpService   = game:GetService("HttpService")
 local TextChatSvc   = game:GetService("TextChatService")
 
 local LocalPlayer = Players.LocalPlayer
+----------------------------------------------------------------
+-- CONFIG PERSISTENCE
+----------------------------------------------------------------
+-- Сохраняются только настройки (значения слайдеров, базовые тогглы),
+-- а не активные фичи (fly, noclip, kill aura, auto-shoot и т.д.).
+-- Это сделано специально: чтобы при каждом инжекте скрипт не запускал
+-- сразу fly или auto-shoot, что небезопасно.
+local CONFIG_FILE = "AXIOM_MM2_config.json"
 
+-- Whitelist того, что сохраняется. Всё остальное в State не трогается.
+local SAVED_KEYS = {
+    -- Sheriff base
+    "sheriffWallCheck",
+    "autoUnequipGun",
+    "shootOffset",
+    "offsetPingMult",
+    -- Sheriff prediction
+    "sheriffPrioritizePing",
+    "sheriffPredictJump",
+    "sheriffPredictLag",
+    "sheriffMaxSim",
+    "sheriffInterval",
+    "sheriffHMul",
+    "sheriffVMul",
+    "sheriffOffsetX",
+    "sheriffOffsetY",
+    "sheriffOffsetZ",
+    -- Murderer base
+    "murdererWallCheck",
+    "knifeFOVEnabled",
+    "knifeFOV",
+    "knifeOffset",
+    -- Murderer prediction
+    "knifePrioritizePing",
+    "knifePredictJump",
+    "knifePredictLag",
+    "knifeMaxSim",
+    "knifeInterval",
+    "knifeHMul",
+    "knifeVMul",
+    "knifeOffsetX",
+    "knifeOffsetY",
+    "knifeOffsetZ",
+    -- World tuning (но не активные toggles)
+    "flySpeed",
+    "ws",
+    "fov",
+    "hitboxExpand",
+    "infJumpLimit2",
+    "aggressiveHitbox",
+}
+
+local ConfigManager = {}
+ConfigManager.loaded = {}
+ConfigManager.saveTask = nil
+
+function ConfigManager:load()
+    if not readfile or not isfile then return end
+    if not isfile(CONFIG_FILE) then return end
+
+    local ok, content = pcall(readfile, CONFIG_FILE)
+    if not ok or not content then return end
+
+    local ok2, data = pcall(function() return HttpService:JSONDecode(content) end)
+    if not ok2 or type(data) ~= "table" then return end
+
+    self.loaded = data
+end
+
+function ConfigManager:apply(stateTable)
+    for _, key in ipairs(SAVED_KEYS) do
+        local v = self.loaded[key]
+        if v ~= nil then
+            -- Защита типов: если сохранённое значение не того типа что в State, игнорируем
+            if type(v) == type(stateTable[key]) then
+                stateTable[key] = v
+            end
+        end
+    end
+end
+
+function ConfigManager:save(stateTable)
+    if not writefile then return end
+
+    -- Debounce: если save вызывается часто, последний выигрывает
+    if self.saveTask then task.cancel(self.saveTask) end
+    self.saveTask = task.delay(1, function()
+        local snapshot = {}
+        for _, key in ipairs(SAVED_KEYS) do
+            snapshot[key] = stateTable[key]
+        end
+
+        local ok, json = pcall(function() return HttpService:JSONEncode(snapshot) end)
+        if not ok then return end
+
+        pcall(writefile, CONFIG_FILE, json)
+        self.saveTask = nil
+    end)
+end
+
+-- Грузим конфиг сразу — до того как State будет использован виджетами
+ConfigManager:load()
 ----------------------------------------------------------------
 -- STATE
 ----------------------------------------------------------------
@@ -102,7 +203,7 @@ local State = {
 
     hubOpen          = true,
 }
-
+ConfigManager:apply(State)
 local Theme = {
     font           = Enum.Font.Montserrat,
     text           = Color3.fromRGB(255, 255, 255),
@@ -701,11 +802,7 @@ local function makeTab(name, order)
     btn.Active = true
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
 
-    -- Тонкая обводка для контраста
-    local btnStroke = Instance.new("UIStroke", btn)
-    btnStroke.Color = Theme.accentDeep
-    btnStroke.Thickness = 1
-    btnStroke.Transparency = 0.6
+   
 
     local page = Instance.new("ScrollingFrame", Content)
     page.Name = name.."Page"
@@ -724,7 +821,7 @@ local function makeTab(name, order)
     layout.SortOrder = Enum.SortOrder.LayoutOrder
     layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
-    Pages[name] = {button = btn, page = page, order = 0, stroke = btnStroke}
+ Pages[name] = {button = btn, page = page, order = 0}
 
     btn.MouseButton1Click:Connect(function()
         for _, p in pairs(Pages) do
@@ -733,22 +830,14 @@ local function makeTab(name, order)
                 BackgroundColor3 = Color3.fromRGB(28, 24, 38),
                 BackgroundTransparency = 0.1
             }):Play()
-            if p.stroke then
-                TweenService:Create(p.stroke, TweenInfo.new(0.2), {
-                    Color = Theme.accentDeep,
-                    Transparency = 0.6
-                }):Play()
-            end
+            
         end
         page.Visible = true
         TweenService:Create(btn, TweenInfo.new(0.2), {
             BackgroundColor3 = Theme.accentDeep,
             BackgroundTransparency = 0
         }):Play()
-        TweenService:Create(btnStroke, TweenInfo.new(0.2), {
-            Color = Theme.accent,
-            Transparency = 0
-        }):Play()
+
         currentPage = name
 
         page.Position = UDim2.new(0, 8, 0, 16)
@@ -967,6 +1056,7 @@ local function addToggle(pageData, text, default, callback)
         refresh()
         local ok, err = pcall(callback, state)
         if not ok then notify("Error: "..tostring(err), Theme.danger) end
+        ConfigManager:save(State)
     end
 
     safeClick(frame, flip)
@@ -1081,6 +1171,7 @@ local function addSlider(pageData, text, min, max, default, step, callback)
         fill.Size = UDim2.new((value - min) / (max - min), 0, 1, 0)
         lbl.Text = text..": "..(step and step >= 1 and math.floor(value) or string.format("%.2f", value))
         pcall(callback, value)
+        ConfigManager:save(State)
     end
 
     -- Dead-zone: слайдер активируется только если палец двинулся горизонтально
@@ -1949,17 +2040,7 @@ end)
 -- COMBAT PAGE (Sheriff блок сверху, Murderer блок снизу)
 ----------------------------------------------------------------
 -- ===================== SHERIFF SECTION =====================
--- Серый заголовок "Sheriff" по центру
-local sheriffHeader = Instance.new("TextLabel", CombatPage.page)
-sheriffHeader.Size = UDim2.new(1, -10, 0, 22)
-sheriffHeader.BackgroundTransparency = 1
-sheriffHeader.Font = Enum.Font.GothamMedium
-sheriffHeader.Text = "Sheriff"
-sheriffHeader.TextColor3 = Color3.fromRGB(170, 170, 175)
-sheriffHeader.TextSize = 13
-sheriffHeader.TextXAlignment = Enum.TextXAlignment.Center
-CombatPage.order = CombatPage.order + 1
-sheriffHeader.LayoutOrder = CombatPage.order
+
 
 -- Контейнер с рамкой для всех функций Шерифа
 local sheriffBox = Instance.new("Frame", CombatPage.page)
@@ -1991,7 +2072,7 @@ sheriffBoxLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 -- SheriffPage теперь указывает на sheriffBox (а не на CombatPage)
 local SheriffPage = {page = sheriffBox, order = 0, button = CombatPage.button}
 
-addSection(SheriffPage, "Combat")
+addSection(SheriffPage, "Sheriff")
 
 addButton(SheriffPage, "Shoot murderer", function() shootMurderer(false) end)
 addToggle(SheriffPage, "Auto-shoot murderer", false, function(s) State.autoShoot = s end)
@@ -2019,9 +2100,7 @@ task.spawn(function()
     end
 end)
 
-addSection(SheriffPage, "Tuning")
-addSlider(SheriffPage, "Shoot offset", -2, 8, State.shootOffset, 0.1, function(v) State.shootOffset = v end)
-addSlider(SheriffPage, "Offset×Ping mult", 0, 5, State.offsetPingMult, 0.1, function(v) State.offsetPingMult = v end)
+
 
 addSection(SheriffPage, "Advanced prediction")
 addText(SheriffPage, "Turn ON for predictive aim instead of simple offset.")
@@ -2065,17 +2144,7 @@ murdererSpacer.BackgroundTransparency = 1
 CombatPage.order = CombatPage.order + 1
 murdererSpacer.LayoutOrder = CombatPage.order
 
--- Серый заголовок "Murderer" по центру
-local murdererHeader = Instance.new("TextLabel", CombatPage.page)
-murdererHeader.Size = UDim2.new(1, -10, 0, 22)
-murdererHeader.BackgroundTransparency = 1
-murdererHeader.Font = Enum.Font.GothamMedium
-murdererHeader.Text = "Murderer"
-murdererHeader.TextColor3 = Color3.fromRGB(170, 170, 175)
-murdererHeader.TextSize = 13
-murdererHeader.TextXAlignment = Enum.TextXAlignment.Center
-CombatPage.order = CombatPage.order + 1
-murdererHeader.LayoutOrder = CombatPage.order
+
 
 -- Контейнер с рамкой для всех функций Убийцы
 local murdererBox = Instance.new("Frame", CombatPage.page)
@@ -2107,7 +2176,7 @@ murdererBoxLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 -- MurdererPage теперь указывает на murdererBox
 local MurdererPage = {page = murdererBox, order = 0, button = CombatPage.button}
 
-addSection(MurdererPage, "Knife throw")
+addSection(MurdererPage, "Murderer")
 
 addButton(MurdererPage, "Throw knife at nearest", function() knifeThrow(false, false) end)
 addToggle(MurdererPage, "Auto knife throw", false, function(s) State.loopKnifeThrow = s end)
@@ -2136,8 +2205,7 @@ end)
 
 addButton(MurdererPage, "Throw with FOV aim", function() knifeThrow(false, true) end)
 
-addSection(MurdererPage, "Tuning (knife)")
-addSlider(MurdererPage, "Knife throw offset", -2, 10, State.knifeOffset, 0.1, function(v) State.knifeOffset = v end)
+
 
 addSection(MurdererPage, "Advanced prediction (knife)")
 addText(MurdererPage, "Predictive aim for thrown knife. Independent from Sheriff settings.")
