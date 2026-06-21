@@ -36,53 +36,21 @@ local LocalPlayer = Players.LocalPlayer
 -- сразу fly или auto-shoot, что небезопасно.
 local CONFIG_FILE = "AXIOM_MM2_config.json"
 
--- Whitelist того, что сохраняется. Всё остальное в State не трогается.
-local SAVED_KEYS = {
-    -- Sheriff base
-    "sheriffWallCheck",
-    "autoUnequipGun",
-    "sheriffCameraTurn",
-    "sheriffShiftLock",
-    "sheriffAimlock",
-    "shootOffset",
-    "offsetPingMult",
-    -- Sheriff prediction
-    "sheriffPrioritizePing",
-    "sheriffPredictJump",
-    "sheriffPredictLag",
-    "sheriffMaxSim",
-    "sheriffInterval",
-    "sheriffHMul",
-    "sheriffVMul",
-    "sheriffOffsetX",
-    "sheriffOffsetY",
-    "sheriffOffsetZ",
-    -- Murderer base
-    "murdererWallCheck",
-    "murdererShiftLock",
-    "murdererAimlock",
-    "murdererAimSheriff",
-    "knifeFOVEnabled",
-    "knifeFOV",
-    "knifeOffset",
-    -- Murderer prediction
-    "knifePrioritizePing",
-    "knifePredictJump",
-    "knifePredictLag",
-    "knifeMaxSim",
-    "knifeInterval",
-    "knifeHMul",
-    "knifeVMul",
-    "knifeOffsetX",
-    "knifeOffsetY",
-    "knifeOffsetZ",
-    -- World tuning (но не активные toggles)
-    "flySpeed",
-    "ws",
-    "fov",
-    "hitboxExpand",
-    "infJumpLimit2",
-    "aggressiveHitbox",
+-- Blacklist: эти ключи НЕ сохраняются — потому что при автозапуске
+-- они либо опасны (fly улетит в небо, noclip провалит сквозь пол),
+-- либо явно палят (aimlock, auto-shoot включатся сразу при заходе).
+-- Всё остальное в State сохраняется.
+local BLACKLIST_KEYS = {
+    hubOpen          = true,
+    fly              = true,
+    noclip           = true,
+    autoShoot        = true,
+    killAuraOn       = true,
+    loopKnifeThrow   = true,
+    sheriffAimlock   = true,
+    murdererAimlock  = true,
+    sheriffShiftLock = true,
+    murdererShiftLock= true,
 }
 
 local ConfigManager = {}
@@ -103,12 +71,11 @@ function ConfigManager:load()
 end
 
 function ConfigManager:apply(stateTable)
-    for _, key in ipairs(SAVED_KEYS) do
-        local v = self.loaded[key]
-        if v ~= nil then
+    for key, loadedValue in pairs(self.loaded) do
+        if not BLACKLIST_KEYS[key] then
             -- Защита типов: если сохранённое значение не того типа что в State, игнорируем
-            if type(v) == type(stateTable[key]) then
-                stateTable[key] = v
+            if stateTable[key] ~= nil and type(loadedValue) == type(stateTable[key]) then
+                stateTable[key] = loadedValue
             end
         end
     end
@@ -121,8 +88,10 @@ function ConfigManager:save(stateTable)
     if self.saveTask then task.cancel(self.saveTask) end
     self.saveTask = task.delay(1, function()
         local snapshot = {}
-        for _, key in ipairs(SAVED_KEYS) do
-            snapshot[key] = stateTable[key]
+        for key, value in pairs(stateTable) do
+            if not BLACKLIST_KEYS[key] then
+                snapshot[key] = value
+            end
         end
 
         local ok, json = pcall(function() return HttpService:JSONEncode(snapshot) end)
@@ -142,8 +111,13 @@ local AXIOM = {}
 AXIOM.__v = "2.0-MM2"
 
 local State = {
-    -- Visuals
-    playerESP        = false,
+  -- Visuals
+    playerESP        = false,  -- legacy, не используется (для совместимости старых конфигов)
+    espHighlight     = false,
+    espDistance      = false,
+    espNickname      = false,
+    espBox3D         = false,
+    espBox2D         = false,
     gunDropESP       = false,
     trapESP          = false,
     hideMeESP        = false,
@@ -1737,15 +1711,16 @@ end
 ----------------------------------------------------------------
 
 ----------------------------------------------------------------
--- PLAYER ESP (роли через GetPlayerData, distance + nick over head)
+-- PLAYER ESP — Highlight + Distance + Nickname + 3D/2D Box
 -- Credits to Kiriot22 for role-getter logic / FeIix-style ESP
 ----------------------------------------------------------------
 local PlayerESP = {}
-PlayerESP.huds = {}        -- player -> BillboardGui с distance + nick
-PlayerESP.highlights = {}  -- player -> Highlight instance
-PlayerESP.currentRoles = {Murder = nil, Sheriff = nil, Hero = nil}
+PlayerESP.huds = {}         -- player -> {gui, dist, nick, distStroke, nickStroke}
+PlayerESP.highlights = {}   -- player -> Highlight
+PlayerESP.box3D = {}        -- player -> array of Drawing.Line
+PlayerESP.box2D = {}        -- player -> array of Drawing.Line
 
--- Цвета ролей (применяются и к Highlight, и к обводке текста в BillboardGui)
+-- Цвета ролей
 local ROLE_COLORS = {
     Murderer = Color3.fromRGB(225, 0, 0),
     Sheriff  = Color3.fromRGB(0, 0, 225),
@@ -1753,9 +1728,9 @@ local ROLE_COLORS = {
     Innocent = Color3.fromRGB(0, 225, 0),
 }
 
--- Lighter outline color (text outline = чуть светлее заливки Highlight)
+-- Outline color чуть светлее заливки
 local function lightenColor(c, amount)
-    amount = amount or 0.35
+    amount = amount or 0.4
     return Color3.new(
         math.min(1, c.R + amount),
         math.min(1, c.G + amount),
@@ -1763,7 +1738,7 @@ local function lightenColor(c, amount)
     )
 end
 
--- Получает текущую таблицу ролей с сервера
+-- Роли с сервера
 local function fetchRoles()
     local rf = ReplicatedStorage:FindFirstChild("GetPlayerData", true)
     if not rf or not rf:IsA("RemoteFunction") then return nil end
@@ -1772,15 +1747,12 @@ local function fetchRoles()
     return data
 end
 
--- Получает роль игрока из таблицы
 local function getPlayerRole(player, rolesTable)
     if not rolesTable then return "Innocent" end
     local info = rolesTable[player.Name]
-    if not info then return "Innocent" end
-    return info.Role or "Innocent"
+    return (info and info.Role) or "Innocent"
 end
 
--- Жив ли игрок (по данным сервера)
 local function isPlayerAlive(player, rolesTable)
     if not rolesTable then return true end
     local info = rolesTable[player.Name]
@@ -1788,7 +1760,7 @@ local function isPlayerAlive(player, rolesTable)
     return not info.Killed and not info.Dead
 end
 
--- Создаёт BillboardGui над игроком: ник + distance, обводка цвета роли
+-- BillboardGui над головой (distance + nickname вплотную)
 local function createHUD(player)
     if PlayerESP.huds[player] then return PlayerESP.huds[player] end
     if not player.Character then return nil end
@@ -1798,13 +1770,13 @@ local function createHUD(player)
     local bb = Instance.new("BillboardGui")
     bb.Name = "AXIOM_ESP_HUD"
     bb.AlwaysOnTop = true
-    bb.Size = UDim2.fromOffset(200, 50)
+    bb.Size = UDim2.fromOffset(200, 38)
     bb.StudsOffset = Vector3.new(0, 2.5, 0)
     bb.Adornee = head
     bb.Parent = ESPGui
 
     local distLabel = Instance.new("TextLabel", bb)
-    distLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    distLabel.Size = UDim2.new(1, 0, 0, 18)
     distLabel.Position = UDim2.new(0, 0, 0, 0)
     distLabel.BackgroundTransparency = 1
     distLabel.Font = Enum.Font.GothamBold
@@ -1814,9 +1786,14 @@ local function createHUD(player)
     distLabel.TextStrokeTransparency = 0
     distLabel.TextStrokeColor3 = ROLE_COLORS.Innocent
 
+    local distStroke = Instance.new("UIStroke", distLabel)
+    distStroke.Color = ROLE_COLORS.Innocent
+    distStroke.Thickness = 2
+    distStroke.Transparency = 0
+
     local nickLabel = Instance.new("TextLabel", bb)
-    nickLabel.Size = UDim2.new(1, 0, 0.5, 0)
-    nickLabel.Position = UDim2.new(0, 0, 0.5, 0)
+    nickLabel.Size = UDim2.new(1, 0, 0, 18)
+    nickLabel.Position = UDim2.new(0, 0, 0, 18)  -- сразу под distance, без зазора
     nickLabel.BackgroundTransparency = 1
     nickLabel.Font = Enum.Font.GothamBold
     nickLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -1825,11 +1802,20 @@ local function createHUD(player)
     nickLabel.TextStrokeTransparency = 0
     nickLabel.TextStrokeColor3 = ROLE_COLORS.Innocent
 
-    PlayerESP.huds[player] = {gui = bb, dist = distLabel, nick = nickLabel}
+    local nickStroke = Instance.new("UIStroke", nickLabel)
+    nickStroke.Color = ROLE_COLORS.Innocent
+    nickStroke.Thickness = 2
+    nickStroke.Transparency = 0
+
+    PlayerESP.huds[player] = {
+        gui = bb,
+        dist = distLabel, distStroke = distStroke,
+        nick = nickLabel, nickStroke = nickStroke
+    }
     return PlayerESP.huds[player]
 end
 
--- Создаёт Highlight для игрока
+-- Highlight на персонаже с толстой обводкой
 local function createHighlight(player)
     if PlayerESP.highlights[player] then return PlayerESP.highlights[player] end
     if not player.Character then return nil end
@@ -1837,8 +1823,8 @@ local function createHighlight(player)
     hl.Name = "AXIOM_ESP_HL"
     hl.Adornee = player.Character
     hl.FillColor = ROLE_COLORS.Innocent
-    hl.OutlineColor = lightenColor(ROLE_COLORS.Innocent, 0.35)
-    hl.FillTransparency = 0.6
+    hl.OutlineColor = lightenColor(ROLE_COLORS.Innocent, 0.4)
+    hl.FillTransparency = 0.55
     hl.OutlineTransparency = 0
     hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     hl.Parent = ESPGui
@@ -1846,7 +1832,126 @@ local function createHighlight(player)
     return hl
 end
 
--- Удаляет ESP для игрока
+-- 8 углов 3D-куба вокруг персонажа
+local function getCharCorners(player)
+    if not player.Character then return nil end
+    local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+    local cf = hrp.CFrame * CFrame.new(0, -0.5, 0)
+    local size = Vector3.new(3, 5, 3) / 2
+    local corners = {}
+    for X = -1, 1, 2 do
+        for Y = -1, 1, 2 do
+            for Z = -1, 1, 2 do
+                corners[#corners+1] = (cf * CFrame.new(size * Vector3.new(X, Y, Z))).Position
+            end
+        end
+    end
+    return corners
+end
+
+-- 3D Box: 12 линий рёбер куба
+local CONNECTIONS_3D = {
+    {1,2},{2,6},{6,5},{5,1},
+    {1,3},{2,4},{6,8},{5,7},
+    {3,4},{4,8},{8,7},{7,3}
+}
+
+local function clear3DBox(player)
+    local arr = PlayerESP.box3D[player]
+    if not arr then return end
+    for _, line in ipairs(arr) do pcall(function() line:Remove() end) end
+    PlayerESP.box3D[player] = nil
+end
+
+local function update3DBox(player, color)
+    if not Drawing then return end
+    clear3DBox(player)
+    local corners = getCharCorners(player)
+    if not corners then return end
+
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+
+    local lines = {}
+    for _, pair in ipairs(CONNECTIONS_3D) do
+        local fromW = corners[pair[1]]
+        local toW = corners[pair[2]]
+        local fromS, fromVis = cam:WorldToViewportPoint(fromW)
+        local toS, toVis = cam:WorldToViewportPoint(toW)
+
+        if fromVis or toVis then
+            local line = Drawing.new("Line")
+            line.Thickness = 2
+            line.From = Vector2.new(fromS.X, fromS.Y)
+            line.To = Vector2.new(toS.X, toS.Y)
+            line.Color = color
+            line.Transparency = 1
+            line.Visible = true
+            lines[#lines+1] = line
+        end
+    end
+    PlayerESP.box3D[player] = lines
+end
+
+-- 2D Box: AABB на экране (4 линии прямоугольника)
+local function clear2DBox(player)
+    local arr = PlayerESP.box2D[player]
+    if not arr then return end
+    for _, line in ipairs(arr) do pcall(function() line:Remove() end) end
+    PlayerESP.box2D[player] = nil
+end
+
+local function update2DBox(player, color)
+    if not Drawing then return end
+    clear2DBox(player)
+    local corners = getCharCorners(player)
+    if not corners then return end
+
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+
+    local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
+    local anyVisible = false
+    for _, c in ipairs(corners) do
+        local s, vis = cam:WorldToViewportPoint(c)
+        if vis then anyVisible = true end
+        if s.Z > 0 then
+            if s.X < minX then minX = s.X end
+            if s.Y < minY then minY = s.Y end
+            if s.X > maxX then maxX = s.X end
+            if s.Y > maxY then maxY = s.Y end
+        end
+    end
+
+    if not anyVisible or minX == math.huge then return end
+
+    local lines = {}
+    local tl = Vector2.new(minX, minY)
+    local tr = Vector2.new(maxX, minY)
+    local bl = Vector2.new(minX, maxY)
+    local br = Vector2.new(maxX, maxY)
+
+    local function mkline(from, to)
+        local line = Drawing.new("Line")
+        line.Thickness = 2
+        line.From = from
+        line.To = to
+        line.Color = color
+        line.Transparency = 1
+        line.Visible = true
+        lines[#lines+1] = line
+    end
+
+    mkline(tl, tr)
+    mkline(tr, br)
+    mkline(br, bl)
+    mkline(bl, tl)
+
+    PlayerESP.box2D[player] = lines
+end
+
+-- Полное удаление ESP для игрока
 local function removePlayerESP(player)
     local h = PlayerESP.huds[player]
     if h and h.gui then h.gui:Destroy() end
@@ -1855,31 +1960,35 @@ local function removePlayerESP(player)
     local hl = PlayerESP.highlights[player]
     if hl then hl:Destroy() end
     PlayerESP.highlights[player] = nil
+
+    clear3DBox(player)
+    clear2DBox(player)
 end
 
--- Полная очистка всего player ESP
 local function clearAllPlayerESP()
-    for player in pairs(PlayerESP.huds) do removePlayerESP(player) end
-    for player in pairs(PlayerESP.highlights) do removePlayerESP(player) end
+    for _, p in ipairs(Players:GetPlayers()) do
+        removePlayerESP(p)
+    end
 end
 
 function reloadPlayerESP()
-    if not State.playerESP then
+    -- Заглушка для совместимости. RenderStepped сам перерисует.
+end
+
+-- Главный цикл ESP
+RunService.RenderStepped:Connect(function()
+    local anyESPOn = State.espHighlight or State.espDistance
+                  or State.espNickname or State.espBox3D or State.espBox2D
+
+    if not anyESPOn then
         clearAllPlayerESP()
         return
     end
-    -- Создаёт/обновит при следующем тике RenderStepped
-end
-
--- Главный цикл: обновляет роли, цвета, distance, HUD каждый кадр
-RunService.RenderStepped:Connect(function()
-    if not State.playerESP then return end
 
     local roles = fetchRoles()
-    local hrp = safeGetHRP()
+    local myHRP = safeGetHRP()
 
     for _, player in ipairs(Players:GetPlayers()) do
-        -- Скип самого себя если включён hideMeESP
         if player == LocalPlayer and State.hideMeESP then
             removePlayerESP(player)
             continue
@@ -1890,21 +1999,16 @@ RunService.RenderStepped:Connect(function()
             continue
         end
 
+        -- Цвет роли
         local role = getPlayerRole(player, roles)
         local alive = isPlayerAlive(player, roles)
-
-        -- Логика цветов:
-        -- Sheriff живой → синий
-        -- Murderer живой → красный
-        -- Hero живой при мёртвом шерифе → жёлтый
-        -- Иначе зелёный
         local color = ROLE_COLORS.Innocent
+
         if role == "Sheriff" and alive then
             color = ROLE_COLORS.Sheriff
         elseif role == "Murderer" and alive then
             color = ROLE_COLORS.Murderer
         elseif role == "Hero" and alive then
-            -- проверяем шерифа на жизнь
             local sheriffPlayer = nil
             if roles then
                 for name, info in pairs(roles) do
@@ -1916,37 +2020,70 @@ RunService.RenderStepped:Connect(function()
             end
             if sheriffPlayer and not isPlayerAlive(sheriffPlayer, roles) then
                 color = ROLE_COLORS.Hero
-            else
-                color = ROLE_COLORS.Innocent
             end
         end
 
         -- Highlight
-        local hl = PlayerESP.highlights[player]
-        if not hl then hl = createHighlight(player) end
-        if hl then
-            hl.FillColor = color
-            hl.OutlineColor = lightenColor(color, 0.35)
-            hl.Adornee = player.Character
+        if State.espHighlight then
+            local hl = PlayerESP.highlights[player] or createHighlight(player)
+            if hl then
+                hl.FillColor = color
+                hl.OutlineColor = lightenColor(color, 0.4)
+                hl.Adornee = player.Character
+            end
+        else
+            if PlayerESP.highlights[player] then
+                PlayerESP.highlights[player]:Destroy()
+                PlayerESP.highlights[player] = nil
+            end
         end
 
-        -- HUD (distance + nick)
-        local hud = PlayerESP.huds[player]
-        if not hud then hud = createHUD(player) end
-        if hud and hud.gui then
-            local head = player.Character:FindFirstChild("Head")
-            if head then
-                hud.gui.Adornee = head
-                hud.dist.TextStrokeColor3 = color
-                hud.nick.TextStrokeColor3 = color
-                if hrp then
-                    local d = (hrp.Position - head.Position).Magnitude
-                    hud.dist.Text = string.format("Distance: %d", math.floor(d))
-                else
-                    hud.dist.Text = "Distance: ?"
+        -- Distance + Nickname (BillboardGui)
+        local needHUD = State.espDistance or State.espNickname
+        if needHUD then
+            local hud = PlayerESP.huds[player] or createHUD(player)
+            if hud and hud.gui then
+                local head = player.Character:FindFirstChild("Head")
+                if head then
+                    hud.gui.Adornee = head
+
+                    hud.dist.Visible = State.espDistance
+                    if State.espDistance then
+                        hud.distStroke.Color = color
+                        if myHRP then
+                            local d = (myHRP.Position - head.Position).Magnitude
+                            hud.dist.Text = string.format("Distance: %d", math.floor(d))
+                        else
+                            hud.dist.Text = "Distance: ?"
+                        end
+                    end
+
+                    hud.nick.Visible = State.espNickname
+                    if State.espNickname then
+                        hud.nickStroke.Color = color
+                        hud.nick.Text = player.Name
+                    end
                 end
-                hud.nick.Text = player.Name
             end
+        else
+            if PlayerESP.huds[player] then
+                PlayerESP.huds[player].gui:Destroy()
+                PlayerESP.huds[player] = nil
+            end
+        end
+
+        -- 3D Box
+        if State.espBox3D then
+            update3DBox(player, color)
+        else
+            clear3DBox(player)
+        end
+
+        -- 2D Box
+        if State.espBox2D then
+            update2DBox(player, color)
+        else
+            clear2DBox(player)
         end
     end
 end)
@@ -1956,11 +2093,10 @@ Players.PlayerRemoving:Connect(function(p)
     removePlayerESP(p)
 end)
 
--- Сброс при респавне (чтобы новый Character получил свежий Highlight)
+-- Сброс при респавне
 local function hookCharacter(p)
     p.CharacterAdded:Connect(function()
         removePlayerESP(p)
-        -- следующий RenderStepped пересоздаст
     end)
 end
 
@@ -2243,10 +2379,11 @@ end
 ----------------------------------------------------------------
 addSection(VisualPage, "ESP")
 
-addToggle(VisualPage, "Players (roles)", false, function(s)
-    State.playerESP = s
-    reloadPlayerESP()
-end)
+addToggle(VisualPage, "Highlight (roles)", false, function(s) State.espHighlight = s end, true)
+addToggle(VisualPage, "Show distance", false, function(s) State.espDistance = s end)
+addToggle(VisualPage, "Show nickname", false, function(s) State.espNickname = s end)
+addToggle(VisualPage, "3D Box", false, function(s) State.espBox3D = s end, true)
+addToggle(VisualPage, "2D Box", false, function(s) State.espBox2D = s end, true)
 
 addToggle(VisualPage, "Dropped gun", false, function(s)
     State.gunDropESP = s
