@@ -36,21 +36,10 @@ local LocalPlayer = Players.LocalPlayer
 -- сразу fly или auto-shoot, что небезопасно.
 local CONFIG_FILE = "AXIOM_MM2_config.json"
 
--- Blacklist: эти ключи НЕ сохраняются — потому что при автозапуске
--- они либо опасны (fly улетит в небо, noclip провалит сквозь пол),
--- либо явно палят (aimlock, auto-shoot включатся сразу при заходе).
--- Всё остальное в State сохраняется.
+-- Сохраняется ВСЁ кроме hubOpen (это runtime-флаг "открыто ли меню",
+-- его сохранять бессмысленно — меню при инжекте всё равно открывается заново).
 local BLACKLIST_KEYS = {
-    hubOpen          = true,
-    fly              = true,
-    noclip           = true,
-    autoShoot        = true,
-    killAuraOn       = true,
-    loopKnifeThrow   = true,
-    sheriffAimlock   = true,
-    murdererAimlock  = true,
-    sheriffShiftLock = true,
-    murdererShiftLock= true,
+    hubOpen = true,
 }
 
 local ConfigManager = {}
@@ -1458,22 +1447,86 @@ local function getMap()
     return nil
 end
 
+----------------------------------------------------------------
+-- ROLE CACHE — Реалтайм-роли с сервера, обновление в фоне
+----------------------------------------------------------------
+-- Серверный RemoteFunction GetPlayerData возвращает таблицу:
+-- { [PlayerName] = { Role = "Murderer"|"Sheriff"|"Hero"|"Innocent", Killed, Dead, ... }, ... }
+-- Кешируем результат, обновляем раз в 0.4с — этого достаточно для combat,
+-- и не нагружает сервер постоянными запросами.
+local RoleCache = {data = nil, lastUpdate = 0}
+
+local function refreshRoleCache(force)
+    local now = tick()
+    if not force and (now - RoleCache.lastUpdate) < 0.4 then return RoleCache.data end
+    local rf = ReplicatedStorage:FindFirstChild("GetPlayerData", true)
+    if not rf or not rf:IsA("RemoteFunction") then return RoleCache.data end
+    local ok, data = pcall(function() return rf:InvokeServer() end)
+    if ok and type(data) == "table" then
+        RoleCache.data = data
+        RoleCache.lastUpdate = now
+    end
+    return RoleCache.data
+end
+
+-- Фоновый обновлятель: тянет роли каждые 0.4с независимо
+task.spawn(function()
+    while true do
+        refreshRoleCache(true)
+        task.wait(0.4)
+    end
+end)
+
+-- Поиск убийцы — серверная роль "Murderer" + жив
 local function findMurderer()
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p.Character and p.Character:FindFirstChild("Knife") then return p end
+    local roles = RoleCache.data
+    if not roles then
+        -- Кеш ещё не готов — fallback на старую логику
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Character and p.Character:FindFirstChild("Knife") then return p end
+        end
+        if LocalPlayer.Backpack:FindFirstChild("Knife") then return LocalPlayer end
+        return nil
     end
-    if LocalPlayer.Backpack:FindFirstChild("Knife") then return LocalPlayer end
+    for name, info in pairs(roles) do
+        if info.Role == "Murderer" and not info.Killed and not info.Dead then
+            local player = Players:FindFirstChild(name)
+            if player then return player end
+        end
+    end
     return nil
 end
 
+-- Поиск шерифа — серверная роль "Sheriff" + жив
+-- Героя (если шериф мёртв, ему даётся ствол) тоже считаем "шерифом" для combat-логики
 local function findSheriff()
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p.Character and p.Character:FindFirstChild("Gun") then return p end
+    local roles = RoleCache.data
+    if not roles then
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Character and p.Character:FindFirstChild("Gun") then return p end
+        end
+        if LocalPlayer.Backpack:FindFirstChild("Gun") then return LocalPlayer end
+        return nil
     end
-    if LocalPlayer.Backpack:FindFirstChild("Gun") then return LocalPlayer end
+
+    -- Сначала живой шериф
+    for name, info in pairs(roles) do
+        if info.Role == "Sheriff" and not info.Killed and not info.Dead then
+            local player = Players:FindFirstChild(name)
+            if player then return player end
+        end
+    end
+
+    -- Если шериф мёртв — Hero (тот, кто подобрал ствол)
+    for name, info in pairs(roles) do
+        if info.Role == "Hero" and not info.Killed and not info.Dead then
+            local player = Players:FindFirstChild(name)
+            if player then return player end
+        end
+    end
+
     return nil
 end
-
 local function findNearestPlayer()
     local hrp = safeGetHRP()
     if not hrp then return nil end
