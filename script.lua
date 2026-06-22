@@ -2384,21 +2384,30 @@ local function shootMurderer(force)
 
   local gun = char:WaitForChild("Gun", 1)
     if gun and gun:FindFirstChild("Shoot") then
-        -- Мгновенный поворот камеры в КАДРЕ выстрела (без Tween).
-        -- Сохраняем исходный CFrame, дёргаем поворот на убийцу,
-        -- стреляем, потом восстанавливаем — всё в одном кадре.
+        -- Мгновенный поворот камеры в КАДРЕ выстрела.
+        -- Камера должна смотреть в ТУ ЖЕ точку, куда летит пуля (predicted),
+        -- а не на HRP цели — иначе сервер видит расхождение и aim ломается.
         local cam = workspace.CurrentCamera
         local originalCF = cam and cam.CFrame or nil
 
-        if State.sheriffCameraTurn and cam and targetHRP then
-            cam.CFrame = CFrame.new(cam.CFrame.Position, targetHRP.Position)
+        if State.sheriffCameraTurn and cam then
+            -- Если instakill — смотрим прямо на HRP (там и стреляем).
+            -- Иначе — смотрим на predicted (туда летит снаряд).
+            local aimPoint
+            if State.instakillShoot then
+                aimPoint = targetHRP.Position
+            else
+                aimPoint = predicted
+            end
+            cam.CFrame = CFrame.new(cam.CFrame.Position, aimPoint)
         end
 
         gun.Shoot:FireServer(unpack(args))
 
-        -- Восстанавливаем камеру через 1 кадр, чтобы выстрел успел уйти
+        -- Возвращаем камеру через 2 кадра (~33ms) — этого хватает чтобы
+        -- сервер прочитал направление выстрела, но игрок почти не заметил поворота.
         if State.sheriffCameraTurn and originalCF and cam then
-            task.delay(0.05, function()
+            task.delay(0.033, function()
                 if cam and cam.Parent then
                     cam.CFrame = originalCF
                 end
@@ -2417,24 +2426,37 @@ end
 ----------------------------------------------------------------
 -- MURDERER KNIFE THROW
 ----------------------------------------------------------------
--- silent=true: для auto-loop, не показывает уведомления
--- forceFOV=true: использует FOV-режим (только цели в круге)
-local function knifeThrow(silent, forceFOV)
+-- silent=true:   для auto-loop, не показывает уведомления
+-- instant=true:  бросок БЕЗ задержки замаха (мгновенно). Используется
+--                отдельной кнопкой "Instant throw".
+--                По умолчанию (instant=false) идёт ~350мс задержка,
+--                имитирующая нормальный замах руки — чтобы со стороны
+--                не было видно мгновенного броска.
+--
+-- Логика выбора цели (silent aim):
+--   1. Если FOV-индикатор ВКЛЮЧЁН и в круге есть игрок → летит В НЕГО.
+--      Куда я "целюсь" руками — не важно, бросок silent-корректируется.
+--   2. Если FOV ВЫКЛЮЧЕН → летит в ближайшего игрока.
+-- В обоих случаях позиция цели рассчитывается через getKnifePredicted (с конфигом).
+local function knifeThrow(silent, instant)
     if findMurderer() ~= LocalPlayer then
         if not silent then notify("You're not murderer.") end
         return
     end
 
-    -- Выбор цели: либо ближайший в FOV, либо вообще ближайший
+    -- ВЫБОР ЦЕЛИ
     local target
-    if forceFOV or State.knifeFOVEnabled then
+    if State.knifeFOVEnabled then
+        -- FOV включён — приоритет тому, кто в круге
         target = getPlayerInKnifeFOV()
         if not target then
-            -- Нет жертвы в круге — обычный бросок без коррекции (если не auto-loop)
+            -- Никого в круге — silent режим молча скипает (для auto-loop),
+            -- ручной бросок падает на ближайшего как fallback
             if silent then return end
             target = findNearestPlayer()
         end
     else
+        -- FOV выключен — всегда ближайший
         target = findNearestPlayer()
     end
 
@@ -2461,12 +2483,24 @@ local function knifeThrow(silent, forceFOV)
     local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
     if not tHRP then return end
 
+    -- Замах: задержка перед FireServer (если instant=false).
+    -- 0.35с — нижняя граница "естественного" броска в MM2.
+    if not instant then
+        task.wait(0.35)
+        -- Перепроверяем что цель ещё жива и существует после задержки
+        if not target.Character then return end
+        tHRP = target.Character:FindFirstChild("HumanoidRootPart")
+        if not tHRP then return end
+        if not char:FindFirstChild("Knife") then return end
+    end
+
+    -- Позиция предсказанная (с учётом конфига knifeXXX и пинга)
+    local predicted = getKnifePredicted(target)
+
     local from = CFrame.new(char.RightHand.Position)
     if State.spawnKnifeAtPlayer then
         from = CFrame.new(tHRP.Position + (tHRP.CFrame.LookVector * 5))
     end
-
-    local predicted = getKnifePredicted(target)
     local to = CFrame.new(predicted)
 
     local knife = char:WaitForChild("Knife", 1)
@@ -2743,7 +2777,8 @@ local MurdererPage = {page = murdererBox, order = 0, button = CombatPage.button}
 
 addSection(MurdererPage, "Murderer")
 
-addButton(MurdererPage, "Throw knife at nearest", function() knifeThrow(false, false) end)
+addButton(MurdererPage, "Throw knife (with windup)", function() knifeThrow(false, false) end)
+addButton(MurdererPage, "Throw knife (INSTANT)", function() knifeThrow(false, true) end)
 addToggle(MurdererPage, "Auto knife throw", false, function(s) State.loopKnifeThrow = s end, "loopKnifeThrow")
 addToggle(MurdererPage, "Spawn knife near victim", false, function(s) State.spawnKnifeAtPlayer = s end, "spawnKnifeAtPlayer")
 addToggle(MurdererPage, "Wall check (Murderer)", true, function(s) State.murdererWallCheck = s end, "murdererWallCheck")
@@ -2769,7 +2804,7 @@ addSlider(MurdererPage, "FOV radius (px)", 50, 600, State.knifeFOV, 5, function(
     updateFOVCircle()
 end)
 
-addButton(MurdererPage, "Throw with FOV aim", function() knifeThrow(false, true) end)
+
 
 
 
