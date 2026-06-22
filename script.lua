@@ -126,7 +126,6 @@ local State = {
     sheriffWallCheck   = true,
     autoUnequipGun     = true,
     sheriffCameraTurn  = false,
-    sheriffCrosshair   = false,
     sheriffAimlock     = false,
     shootOffset        = 2.8,
     offsetPingMult     = 1.0,
@@ -149,7 +148,6 @@ local State = {
     killAuraOn           = false,
     autoGetGun           = false,
     murdererWallCheck    = true,
-    murdererCrosshair    = false,
     murdererAimlock      = false,
     murdererAimSheriff   = false,
     knifeFOVEnabled      = false,
@@ -185,6 +183,9 @@ local State = {
     antiAFK          = false,
 
     hubOpen          = true,
+
+    -- Список вытащенных floating-кнопок: { {label="Fly", x=80, y=200}, ... }
+    floatingButtonsState = {},
 }
 ConfigManager:apply(State)
 local Theme = {
@@ -413,13 +414,32 @@ FloatingLayer.Size = UDim2.new(1, 0, 1, 0)
 FloatingLayer.BackgroundTransparency = 1
 FloatingLayer.ZIndex = 5
 FloatingLayer.Active = false  -- не блокируем нижние input'ы
+-- Реестр всех pin-кнопок: label -> callback. Используется для восстановления
+-- floating-кнопок из конфига после перезапуска (callback нельзя сохранить в JSON).
+local PinRegistry = {}
 
+-- Записывает текущее расположение floating-кнопок в State и сохраняет конфиг
+local function saveFloatingButtonsState()
+    local list = {}
+    for label, btn in pairs(floatingButtons) do
+        if btn and btn.Parent then
+            list[#list+1] = {
+                label = label,
+                x = btn.Position.X.Offset,
+                y = btn.Position.Y.Offset,
+            }
+        end
+    end
+    State.floatingButtonsState = list
+    ConfigManager:save(State)
+end
 local floatingButtons = {}
 
 local function makeFloatingButton(label, callback)
     if floatingButtons[label] then
         floatingButtons[label]:Destroy()
         floatingButtons[label] = nil
+        saveFloatingButtonsState()
         notify("Floating button removed: "..label, Theme.accentAlt, 2)
         return
     end
@@ -484,6 +504,7 @@ local function makeFloatingButton(label, callback)
                     if floatingButtons[label] and not moved then
                         floatingButtons[label]:Destroy()
                         floatingButtons[label] = nil
+                        saveFloatingButtonsState()
                         notify("Floating button removed: "..label, Theme.accentAlt, 2)
                     end
                 end)
@@ -526,6 +547,8 @@ local function makeFloatingButton(label, callback)
                 startPos.X.Scale, startPos.X.Offset + delta.X,
                 startPos.Y.Scale, startPos.Y.Offset + delta.Y
             )
+            -- Сохраняем при перетаскивании — ConfigManager:save сам делает debounce
+            saveFloatingButtonsState()
         end
     end)
 
@@ -533,11 +556,13 @@ local function makeFloatingButton(label, callback)
         if floatingButtons[label] then
             floatingButtons[label]:Destroy()
             floatingButtons[label] = nil
+            saveFloatingButtonsState()
             notify("Floating button removed: "..label, Theme.accentAlt, 2)
         end
     end)
 
-    floatingButtons[label] = btn
+   floatingButtons[label] = btn
+    saveFloatingButtonsState()
     notify("Floating button created. Long-press (mobile) or right-click (PC) to remove.", Theme.accent, 3)
 end
 
@@ -895,7 +920,9 @@ local function attachPinButton(row, label, callback)
         TweenService:Create(pin, TweenInfo.new(0.2), {BackgroundColor3 = Theme.accentDeep}):Play()
     end)
 
-    safeClick(pin, function() makeFloatingButton(label, callback) end)
+   safeClick(pin, function() makeFloatingButton(label, callback) end)
+    -- Регистрируем callback для восстановления floating-кнопки из конфига
+    PinRegistry[label] = callback
     return pin
 end
 
@@ -976,7 +1003,7 @@ local function addButton(pageData, text, callback)
     return row
 end
 
-local function addToggle(pageData, text, default, callback)
+local function addToggle(pageData, text, default, callback, stateKey)
     local row = Instance.new("Frame", pageData.page)
     row.Size = UDim2.new(1, -10, 0, 28)
     row.BackgroundTransparency = 1
@@ -1016,7 +1043,13 @@ local function addToggle(pageData, text, default, callback)
     knob.BorderSizePixel = 0
     Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
 
+    -- ВАЖНО: если передан stateKey и в State уже есть сохранённое значение,
+    -- используем его вместо default
     local state = default or false
+    if stateKey and State[stateKey] ~= nil then
+        state = State[stateKey]
+    end
+
     local function refresh()
         if state then
             TweenService:Create(knob, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
@@ -1033,6 +1066,15 @@ local function addToggle(pageData, text, default, callback)
         end
     end
     refresh()
+
+    -- Если есть сохранённое значение — сразу запускаем callback,
+    -- чтобы фича активировалась (ESP отрисовался, FOV-круг появился и т.д.)
+    if stateKey and State[stateKey] == true then
+        task.spawn(function()
+            local ok, err = pcall(callback, true)
+            if not ok then warn("[AXIOM] addToggle init error for "..text..": "..tostring(err)) end
+        end)
+    end
 
     local function flip()
         state = not state
@@ -1283,60 +1325,7 @@ do
     end)
     if not ok then ESPGui.Parent = CoreGui end
 end
-----------------------------------------------------------------
--- CROSSHAIR (4 rotating white sticks)
-----------------------------------------------------------------
-local Crosshair = Instance.new("Frame", ESPGui)
-Crosshair.Name = "Crosshair"
-Crosshair.AnchorPoint = Vector2.new(0.5, 0.5)
-Crosshair.Position = UDim2.new(0.5, 0, 0.5, 0)
-Crosshair.Size = UDim2.fromOffset(40, 40)
-Crosshair.BackgroundTransparency = 1
-Crosshair.BorderSizePixel = 0
-Crosshair.Visible = false
-Crosshair.ZIndex = 2
 
-local function makeCrosshairTick()
-    local tick = Instance.new("Frame", Crosshair)
-    tick.AnchorPoint = Vector2.new(0.5, 0.5)
-    tick.Size = UDim2.fromOffset(2, 10)
-    tick.BackgroundColor3 = Color3.new(1, 1, 1)
-    tick.BorderSizePixel = 0
-    tick.ZIndex = 2
-    Instance.new("UICorner", tick).CornerRadius = UDim.new(1, 0)
-    return tick
-end
-
-local tickN = makeCrosshairTick()
-tickN.Position = UDim2.new(0.5, 0, 0.5, -13)
-tickN.Rotation = 0
-
-local tickS = makeCrosshairTick()
-tickS.Position = UDim2.new(0.5, 0, 0.5, 13)
-tickS.Rotation = 0
-
-local tickE = makeCrosshairTick()
-tickE.Position = UDim2.new(0.5, 13, 0.5, 0)
-tickE.Rotation = 90
-
-local tickW = makeCrosshairTick()
-tickW.Position = UDim2.new(0.5, -13, 0.5, 0)
-tickW.Rotation = 90
-
-task.spawn(function()
-    while Crosshair.Parent do
-        TweenService:Create(Crosshair, TweenInfo.new(8, Enum.EasingStyle.Linear), {Rotation = 360}):Play()
-        task.wait(8)
-        Crosshair.Rotation = 0
-    end
-end)
-
-RunService.RenderStepped:Connect(function()
-    local active = State.sheriffCrosshair or State.murdererCrosshair
-    if Crosshair.Visible ~= active then
-        Crosshair.Visible = active
-    end
-end)
 local ESP = {}
 ESP.entries = {}
 
@@ -2318,32 +2307,26 @@ RunService.RenderStepped:Connect(function()
     local isMurderer = findMurderer() == LocalPlayer
 
     -- SHERIFF aim logic
-    if isSheriff then
-        local needAim = State.sheriffAimlock or State.sheriffCrosshair
-        if needAim then
-            local murd = findMurderer()
-            if murd and murd.Character then
-                lockOnto(murd)
-            end
+    if isSheriff and State.sheriffAimlock then
+        local murd = findMurderer()
+        if murd and murd.Character then
+            lockOnto(murd)
         end
     end
 
     -- MURDERER aim logic
-    if isMurderer then
-        local needAim = State.murdererAimlock or State.murdererCrosshair
-        if needAim then
-            local target
-            if State.murdererAimSheriff then
-                target = findSheriff()
-                if not target or not target.Character then
-                    target = findNearestPlayer()
-                end
-            else
+    if isMurderer and State.murdererAimlock then
+        local target
+        if State.murdererAimSheriff then
+            target = findSheriff()
+            if not target or not target.Character then
                 target = findNearestPlayer()
             end
-            if target and target.Character then
-                lockOnto(target)
-            end
+        else
+            target = findNearestPlayer()
+        end
+        if target and target.Character then
+            lockOnto(target)
         end
     end
 end)
@@ -2399,11 +2382,26 @@ local function shootMurderer(force)
 
   local gun = char:WaitForChild("Gun", 1)
     if gun and gun:FindFirstChild("Shoot") then
-        -- Перед выстрелом поворачиваем камеру на цель (если включено)
-        if State.sheriffCameraTurn then
-            turnCameraTo(targetHRP.Position, true)
+        -- Мгновенный поворот камеры в КАДРЕ выстрела (без Tween).
+        -- Сохраняем исходный CFrame, дёргаем поворот на убийцу,
+        -- стреляем, потом восстанавливаем — всё в одном кадре.
+        local cam = workspace.CurrentCamera
+        local originalCF = cam and cam.CFrame or nil
+
+        if State.sheriffCameraTurn and cam and targetHRP then
+            cam.CFrame = CFrame.new(cam.CFrame.Position, targetHRP.Position)
         end
+
         gun.Shoot:FireServer(unpack(args))
+
+        -- Восстанавливаем камеру через 1 кадр, чтобы выстрел успел уйти
+        if State.sheriffCameraTurn and originalCF and cam then
+            task.delay(0.05, function()
+                if cam and cam.Parent then
+                    cam.CFrame = originalCF
+                end
+            end)
+        end
 
         if State.autoUnequipGun then
             task.delay(0.03, function()
@@ -2480,11 +2478,11 @@ end
 ----------------------------------------------------------------
 addSection(VisualPage, "ESP")
 
-addToggle(VisualPage, "Highlight (roles)", false, function(s) State.espHighlight = s end, true)
-addToggle(VisualPage, "Show distance", false, function(s) State.espDistance = s end)
-addToggle(VisualPage, "Show nickname", false, function(s) State.espNickname = s end)
-addToggle(VisualPage, "3D Box", false, function(s) State.espBox3D = s end, true)
-addToggle(VisualPage, "2D Box", false, function(s) State.espBox2D = s end, true)
+addToggle(VisualPage, "Highlight (roles)", false, function(s) State.espHighlight = s end, "espHighlight")
+addToggle(VisualPage, "Show distance", false, function(s) State.espDistance = s end, "espDistance")
+addToggle(VisualPage, "Show nickname", false, function(s) State.espNickname = s end, "espNickname")
+addToggle(VisualPage, "3D Box", false, function(s) State.espBox3D = s end, "espBox3D")
+addToggle(VisualPage, "2D Box", false, function(s) State.espBox2D = s end, "espBox2D")
 
 addToggle(VisualPage, "Dropped gun", false, function(s)
     State.gunDropESP = s
@@ -2504,7 +2502,7 @@ addToggle(VisualPage, "Dropped gun", false, function(s)
     else
         ESP:RemoveGroup("gun")
     end
-end)
+end, "gunDropESP")
 
 addToggle(VisualPage, "Traps", false, function(s)
     State.trapESP = s
@@ -2522,12 +2520,12 @@ addToggle(VisualPage, "Traps", false, function(s)
     else
         ESP:RemoveGroup("trap")
     end
-end)
+end, "trapESP")
 
 addToggle(VisualPage, "Hide my own ESP", false, function(s)
     State.hideMeESP = s
     reloadPlayerESP()
-end)
+end, "hideMeESP")
 
 addSection(VisualPage, "Round timer")
 
@@ -2639,13 +2637,12 @@ local SheriffPage = {page = sheriffBox, order = 0, button = CombatPage.button}
 addSection(SheriffPage, "Sheriff")
 
 addButton(SheriffPage, "Shoot murderer", function() shootMurderer(false) end)
-addToggle(SheriffPage, "Auto-shoot murderer", false, function(s) State.autoShoot = s end)
-addToggle(SheriffPage, "Instakill shoot", false, function(s) State.instakillShoot = s end)
-addToggle(SheriffPage, "Wall check (Sheriff)", true, function(s) State.sheriffWallCheck = s end)
-addToggle(SheriffPage, "Auto-unequip after shot", true, function(s) State.autoUnequipGun = s end)
-addToggle(SheriffPage, "Camera turn on shoot", false, function(s) State.sheriffCameraTurn = s end)
-addToggle(SheriffPage, "Crosshair lock → murderer", false, function(s) State.sheriffCrosshair = s end)
-addToggle(SheriffPage, "Aimlock → murderer", false, function(s) State.sheriffAimlock = s end)
+addToggle(SheriffPage, "Auto-shoot murderer", false, function(s) State.autoShoot = s end, "autoShoot")
+addToggle(SheriffPage, "Instakill shoot", false, function(s) State.instakillShoot = s end, "instakillShoot")
+addToggle(SheriffPage, "Wall check (Sheriff)", true, function(s) State.sheriffWallCheck = s end, "sheriffWallCheck")
+addToggle(SheriffPage, "Auto-unequip after shot", true, function(s) State.autoUnequipGun = s end, "autoUnequipGun")
+addToggle(SheriffPage, "Camera turn on shoot", false, function(s) State.sheriffCameraTurn = s end, "sheriffCameraTurn")
+addToggle(SheriffPage, "Aimlock → murderer", false, function(s) State.sheriffAimlock = s end, "sheriffAimlock")
 -- Auto-shoot loop
 task.spawn(function()
     while task.wait(0.5) do
@@ -2671,9 +2668,9 @@ end)
 addSection(SheriffPage, "Advanced prediction")
 addText(SheriffPage, "Turn ON for predictive aim instead of simple offset.")
 
-addToggle(SheriffPage, "Prioritize Your Ping", false, function(s) State.sheriffPrioritizePing = s end)
-addToggle(SheriffPage, "Predict Jump", false, function(s) State.sheriffPredictJump = s end)
-addToggle(SheriffPage, "Predict Lag", false, function(s) State.sheriffPredictLag = s end)
+addToggle(SheriffPage, "Prioritize Your Ping", false, function(s) State.sheriffPrioritizePing = s end, "sheriffPrioritizePing")
+addToggle(SheriffPage, "Predict Jump", false, function(s) State.sheriffPredictJump = s end, "sheriffPredictJump")
+addToggle(SheriffPage, "Predict Lag", false, function(s) State.sheriffPredictLag = s end, "sheriffPredictLag")
 
 addSlider(SheriffPage, "Max Sim Time (ms)", 30, 90, State.sheriffMaxSim, 1, function(v) State.sheriffMaxSim = v end)
 addSlider(SheriffPage, "Prediction Interval (ms)", 1, 800, State.sheriffInterval, 1, function(v) State.sheriffInterval = v end)
@@ -2697,7 +2694,7 @@ addButton(SheriffPage, "Teleport to dropped gun", function()
     LocalPlayer.Backpack.ChildAdded:Wait()
     char:PivotTo(prev)
 end)
-addToggle(SheriffPage, "Auto-grab dropped gun", false, function(s) State.autoGetGun = s end)
+addToggle(SheriffPage, "Auto-grab dropped gun", false, function(s) State.autoGetGun = s end, "autoGetGun")
 
 ----------------------------------------------------------------
 -- MURDERER SECTION (внутри Combat tab, ниже Sheriff)
@@ -2745,12 +2742,11 @@ local MurdererPage = {page = murdererBox, order = 0, button = CombatPage.button}
 addSection(MurdererPage, "Murderer")
 
 addButton(MurdererPage, "Throw knife at nearest", function() knifeThrow(false, false) end)
-addToggle(MurdererPage, "Auto knife throw", false, function(s) State.loopKnifeThrow = s end)
-addToggle(MurdererPage, "Spawn knife near victim", false, function(s) State.spawnKnifeAtPlayer = s end)
-addToggle(MurdererPage, "Wall check (Murderer)", true, function(s) State.murdererWallCheck = s end)
-addToggle(MurdererPage, "Crosshair lock → nearest", false, function(s) State.murdererCrosshair = s end)
-addToggle(MurdererPage, "Aimlock → nearest", false, function(s) State.murdererAimlock = s end)
-addToggle(MurdererPage, "Aimlock priority: Sheriff", false, function(s) State.murdererAimSheriff = s end)
+addToggle(MurdererPage, "Auto knife throw", false, function(s) State.loopKnifeThrow = s end, "loopKnifeThrow")
+addToggle(MurdererPage, "Spawn knife near victim", false, function(s) State.spawnKnifeAtPlayer = s end, "spawnKnifeAtPlayer")
+addToggle(MurdererPage, "Wall check (Murderer)", true, function(s) State.murdererWallCheck = s end, "murdererWallCheck")
+addToggle(MurdererPage, "Aimlock → nearest", false, function(s) State.murdererAimlock = s end, "murdererAimlock")
+addToggle(MurdererPage, "Aimlock priority: Sheriff", false, function(s) State.murdererAimSheriff = s end, "murdererAimSheriff")
 -- Auto knife throw loop
 task.spawn(function()
     while task.wait(1.5) do
@@ -2764,7 +2760,7 @@ addText(MurdererPage, "When enabled, a red circle appears on screen. If a player
 addToggle(MurdererPage, "Enable FOV indicator", false, function(s)
     State.knifeFOVEnabled = s
     updateFOVCircle()
-end)
+end, "knifeFOVEnabled")
 
 addSlider(MurdererPage, "FOV radius (px)", 50, 600, State.knifeFOV, 5, function(v)
     State.knifeFOV = v
@@ -2778,9 +2774,9 @@ addButton(MurdererPage, "Throw with FOV aim", function() knifeThrow(false, true)
 addSection(MurdererPage, "Advanced prediction (knife)")
 addText(MurdererPage, "Predictive aim for thrown knife. Independent from Sheriff settings.")
 
-addToggle(MurdererPage, "Prioritize Your Ping", false, function(s) State.knifePrioritizePing = s end)
-addToggle(MurdererPage, "Predict Jump", false, function(s) State.knifePredictJump = s end)
-addToggle(MurdererPage, "Predict Lag", false, function(s) State.knifePredictLag = s end)
+addToggle(MurdererPage, "Prioritize Your Ping", false, function(s) State.knifePrioritizePing = s end, "knifePrioritizePing")
+addToggle(MurdererPage, "Predict Jump", false, function(s) State.knifePredictJump = s end, "knifePredictJump")
+addToggle(MurdererPage, "Predict Lag", false, function(s) State.knifePredictLag = s end, "knifePredictLag")
 
 addSlider(MurdererPage, "Max Sim Time (ms)", 30, 120, State.knifeMaxSim, 1, function(v) State.knifeMaxSim = v end)
 addSlider(MurdererPage, "Prediction Interval (ms)", 1, 800, State.knifeInterval, 1, function(v) State.knifeInterval = v end)
@@ -2822,7 +2818,7 @@ addButton(MurdererPage, "Kill nearest", function()
     if vHRP and vHRP.Parent then vHRP.Anchored = false end
 end)
 
-addToggle(MurdererPage, "Kill aura", false, function(s) State.killAuraOn = s end)
+addToggle(MurdererPage, "Kill aura", false, function(s) State.killAuraOn = s end, "killAuraOn")
 
 task.spawn(function()
     while task.wait(0.1) do
@@ -3000,7 +2996,7 @@ end
 addToggle(WorldPage, "Fly", false, function(s)
     State.fly = s
     if s then startFly() else stopFly() end
-end)
+end, "fly")
 addSlider(WorldPage, "Fly speed", 20, 350, State.flySpeed, 5, function(v) State.flySpeed = v end)
 
 local infJumpConn, landedConn
@@ -3033,7 +3029,7 @@ addToggle(WorldPage, "Infinite jump", false, function(s)
                 task.wait(0.1)
                 infJumpDeb = false
             end
-        end)
+        end, "InfJump") 
     else
         if infJumpConn then infJumpConn:Disconnect() infJumpConn = nil end
         if landedConn then landedConn:Disconnect() landedConn = nil end
@@ -3043,7 +3039,7 @@ end)
 addToggle(WorldPage, "Limit inf-jump to 2", false, function(s)
     State.infJumpLimit2 = s
     jumpCount = 0
-end)
+end, "infJumpLimit2")
 
 addSection(WorldPage, "Speed / FOV")
 addInput(WorldPage, "Walkspeed", "Set", function(text)
@@ -3059,7 +3055,7 @@ addInput(WorldPage, "FOV", "Set", function(text)
     State.fov = n
     TweenService:Create(workspace.CurrentCamera, TweenInfo.new(0.5), {FieldOfView = n}):Play()
 end)
-addToggle(WorldPage, "Loop walkspeed & FOV", false, function(s) State.loopWSFOV = s end)
+addToggle(WorldPage, "Loop walkspeed & FOV", false, function(s) State.loopWSFOV = s end, "loopWSFOV")
 
 RunService.RenderStepped:Connect(function()
     if State.loopWSFOV then
@@ -3093,7 +3089,7 @@ addInput(WorldPage, "Hitbox size (cube)", "Expand", function(text)
     end
     notify("Hitboxes expanded.")
 end)
-addToggle(WorldPage, "Aggressive hitbox (all parts)", false, function(s) State.aggressiveHitbox = s end)
+addToggle(WorldPage, "Aggressive hitbox (all parts)", false, function(s) State.aggressiveHitbox = s end, "aggressiveHitbox")
 
 local hitboxLoopConn
 addToggle(WorldPage, "Loop hitbox expansion", false, function(s)
@@ -3110,7 +3106,7 @@ addToggle(WorldPage, "Loop hitbox expansion", false, function(s)
                     r.CanCollide = false
                 end
             end
-        end)
+        end, "loopHitbox") 
     else
         if hitboxLoopConn then hitboxLoopConn:Disconnect() hitboxLoopConn = nil end
     end
@@ -3126,7 +3122,7 @@ addToggle(WorldPage, "Noclip", false, function(s)
             for _, p in ipairs(char:GetDescendants()) do
                 if p:IsA("BasePart") and p.CanCollide then p.CanCollide = false end
             end
-        end)
+        end, "noclip")
     else
         if noclipConn then noclipConn:Disconnect() noclipConn = nil end
     end
@@ -3167,7 +3163,7 @@ addInput(WorldPage, "Goto player", "Go", function(text)
         mHRP.CFrame = CFrame.new(tHRP.Position + Vector3.new(0, 5, 0))
     end
 end)
-addToggle(WorldPage, "CTRL+Click teleport", false, function(s) State.ctrlClickTP = s end)
+addToggle(WorldPage, "CTRL+Click teleport", false, function(s) State.ctrlClickTP = s end, "ctrlClickTP")
 
 UIS.InputBegan:Connect(function(inp, proc)
     if proc then return end
@@ -3283,7 +3279,7 @@ addToggle(WorldPage, "Anti-fling", false, function(s)
                     end
                 end
             end
-        end)
+        end, "antiFling")
         antiFlingMeConn = RunService.Heartbeat:Connect(function()
             local char = safeGetCharacter()
             local pp = char and char.PrimaryPart
@@ -3323,7 +3319,7 @@ addToggle(WorldPage, "Anti-AFK", false, function(s)
         end)
         notify("Anti-AFK active.")
     end
-end)
+end, "antiAFK")
 
 addSection(WorldPage, "Performance")
 addButton(WorldPage, "FPS boost", function()
@@ -3431,13 +3427,65 @@ UIS.InputBegan:Connect(function(inp, proc)
         if State.hubOpen then closeMenu() else openMenu() end
     end
 end)
+----------------------------------------------------------------
+-- Восстановление floating-кнопок из конфига
+----------------------------------------------------------------
+-- Создаёт floating-кнопку без toggle-логики (для восстановления при инжекте).
+-- Использует тот же визуал/драг что и обычная, но не "тогглит" существующую.
+local function restoreFloatingButton(label, x, y, callback)
+    -- Удаляем существующую если по какой-то причине уже есть
+    if floatingButtons[label] then
+        floatingButtons[label]:Destroy()
+        floatingButtons[label] = nil
+    end
 
+    -- Хак: создаём через makeFloatingButton, но т.к. её там нет —
+    -- она создастся, и потом мы скорректируем позицию
+    makeFloatingButton(label, callback)
+    local btn = floatingButtons[label]
+    if btn then
+        btn.Position = UDim2.fromOffset(x, y)
+    end
+end
+
+-- Восстанавливаем все сохранённые floating-кнопки
+do
+    local saved = State.floatingButtonsState or {}
+    -- Очищаем State чтобы saveFloatingButtonsState не дублировал во время восстановления
+    State.floatingButtonsState = {}
+    for _, entry in ipairs(saved) do
+        local callback = PinRegistry[entry.label]
+        if callback then
+            restoreFloatingButton(entry.label, entry.x, entry.y, callback)
+        end
+    end
+end
 ----------------------------------------------------------------
 -- INIT
 ----------------------------------------------------------------
 Pages.Visual.button.BackgroundColor3 = Theme.accentDeep
 Pages.Visual.page.Visible = true
 currentPage = "Visual"
+
+-- Применяем сохранённые FOV/Walkspeed при инжекте
+local function applyMovementSettings()
+    local cam = workspace.CurrentCamera
+    if cam and State.fov and State.fov ~= 70 then
+        cam.FieldOfView = State.fov
+    end
+    local hum = safeGetHumanoid()
+    if hum and State.ws and State.ws ~= 16 then
+        hum.WalkSpeed = State.ws
+    end
+end
+
+applyMovementSettings()
+
+-- Применяем заново после респавна (Roblox сбрасывает Humanoid)
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.3)
+    applyMovementSettings()
+end)
 
 openMenu()
 
