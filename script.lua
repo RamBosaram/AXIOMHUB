@@ -93,6 +93,14 @@ end
 
 -- Грузим конфиг сразу — до того как State будет использован виджетами
 ConfigManager:load()
+print("[AXIOM] readfile =", readfile, "writefile =", writefile, "isfile =", isfile)
+if isfile then
+    print("[AXIOM] config exists:", isfile("AXIOM_MM2_config.json"))
+    if isfile("AXIOM_MM2_config.json") then
+        print("[AXIOM] config content:", readfile("AXIOM_MM2_config.json"))
+    end
+end
+print("[AXIOM] executor:", identifyexecutor and identifyexecutor() or "unknown")
 ----------------------------------------------------------------
 -- STATE
 ----------------------------------------------------------------
@@ -118,7 +126,7 @@ local State = {
     sheriffWallCheck   = true,
     autoUnequipGun     = true,
     sheriffCameraTurn  = false,
-    sheriffShiftLock   = false,
+    sheriffCrosshair   = false,
     sheriffAimlock     = false,
     shootOffset        = 2.8,
     offsetPingMult     = 1.0,
@@ -141,7 +149,7 @@ local State = {
     killAuraOn           = false,
     autoGetGun           = false,
     murdererWallCheck    = true,
-    murdererShiftLock    = false,
+    murdererCrosshair    = false,
     murdererAimlock      = false,
     murdererAimSheriff   = false,
     knifeFOVEnabled      = false,
@@ -1275,7 +1283,60 @@ do
     end)
     if not ok then ESPGui.Parent = CoreGui end
 end
+----------------------------------------------------------------
+-- CROSSHAIR (4 rotating white sticks)
+----------------------------------------------------------------
+local Crosshair = Instance.new("Frame", ESPGui)
+Crosshair.Name = "Crosshair"
+Crosshair.AnchorPoint = Vector2.new(0.5, 0.5)
+Crosshair.Position = UDim2.new(0.5, 0, 0.5, 0)
+Crosshair.Size = UDim2.fromOffset(40, 40)
+Crosshair.BackgroundTransparency = 1
+Crosshair.BorderSizePixel = 0
+Crosshair.Visible = false
+Crosshair.ZIndex = 2
 
+local function makeCrosshairTick()
+    local tick = Instance.new("Frame", Crosshair)
+    tick.AnchorPoint = Vector2.new(0.5, 0.5)
+    tick.Size = UDim2.fromOffset(2, 10)
+    tick.BackgroundColor3 = Color3.new(1, 1, 1)
+    tick.BorderSizePixel = 0
+    tick.ZIndex = 2
+    Instance.new("UICorner", tick).CornerRadius = UDim.new(1, 0)
+    return tick
+end
+
+local tickN = makeCrosshairTick()
+tickN.Position = UDim2.new(0.5, 0, 0.5, -13)
+tickN.Rotation = 0
+
+local tickS = makeCrosshairTick()
+tickS.Position = UDim2.new(0.5, 0, 0.5, 13)
+tickS.Rotation = 0
+
+local tickE = makeCrosshairTick()
+tickE.Position = UDim2.new(0.5, 13, 0.5, 0)
+tickE.Rotation = 90
+
+local tickW = makeCrosshairTick()
+tickW.Position = UDim2.new(0.5, -13, 0.5, 0)
+tickW.Rotation = 90
+
+task.spawn(function()
+    while Crosshair.Parent do
+        TweenService:Create(Crosshair, TweenInfo.new(8, Enum.EasingStyle.Linear), {Rotation = 360}):Play()
+        task.wait(8)
+        Crosshair.Rotation = 0
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    local active = State.sheriffCrosshair or State.murdererCrosshair
+    if Crosshair.Visible ~= active then
+        Crosshair.Visible = active
+    end
+end)
 local ESP = {}
 ESP.entries = {}
 
@@ -2227,18 +2288,7 @@ local function turnCameraTo(targetPos, smooth)
     end
 end
 
--- Активен ли shift lock у LocalPlayer
-local function isShiftLockActive()
-    -- Способ 1: MouseBehavior зафиксировано в центре
-    if UIS.MouseBehavior == Enum.MouseBehavior.LockCenter then
-        return true
-    end
-    -- Способ 2 (мобайл): иконка shift lock включена и Humanoid.CameraOffset смещён
-    local char = safeGetCharacter()
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if hum and hum.CameraOffset.X ~= 0 then return true end
-    return false
-end
+
 
 -- Принудительно поворачивает персонажа и камеру на цель
 -- Используется в Aimlock и Shift Lock targeting
@@ -2261,7 +2311,7 @@ local function lockOnto(targetPlayer)
     myHRP.CFrame = CFrame.new(from, to)
 end
 
--- Главный цикл shift lock / aimlock: проверяет тогглы каждый кадр и
+-- Главный цикл aimlock / crosshair: проверяет тогглы каждый кадр и
 -- применяет наведение. Шерифские и убийцинские тогглы — независимы.
 RunService.RenderStepped:Connect(function()
     local isSheriff = findSheriff() == LocalPlayer
@@ -2269,8 +2319,7 @@ RunService.RenderStepped:Connect(function()
 
     -- SHERIFF aim logic
     if isSheriff then
-        local needAim = State.sheriffAimlock
-            or (State.sheriffShiftLock and isShiftLockActive())
+        local needAim = State.sheriffAimlock or State.sheriffCrosshair
         if needAim then
             local murd = findMurderer()
             if murd and murd.Character then
@@ -2281,8 +2330,7 @@ RunService.RenderStepped:Connect(function()
 
     -- MURDERER aim logic
     if isMurderer then
-        local needAim = State.murdererAimlock
-            or (State.murdererShiftLock and isShiftLockActive())
+        local needAim = State.murdererAimlock or State.murdererCrosshair
         if needAim then
             local target
             if State.murdererAimSheriff then
@@ -2596,7 +2644,7 @@ addToggle(SheriffPage, "Instakill shoot", false, function(s) State.instakillShoo
 addToggle(SheriffPage, "Wall check (Sheriff)", true, function(s) State.sheriffWallCheck = s end)
 addToggle(SheriffPage, "Auto-unequip after shot", true, function(s) State.autoUnequipGun = s end)
 addToggle(SheriffPage, "Camera turn on shoot", false, function(s) State.sheriffCameraTurn = s end)
-addToggle(SheriffPage, "Shift Lock → murderer", false, function(s) State.sheriffShiftLock = s end)
+addToggle(SheriffPage, "Crosshair lock → murderer", false, function(s) State.sheriffCrosshair = s end)
 addToggle(SheriffPage, "Aimlock → murderer", false, function(s) State.sheriffAimlock = s end)
 -- Auto-shoot loop
 task.spawn(function()
@@ -2700,7 +2748,7 @@ addButton(MurdererPage, "Throw knife at nearest", function() knifeThrow(false, f
 addToggle(MurdererPage, "Auto knife throw", false, function(s) State.loopKnifeThrow = s end)
 addToggle(MurdererPage, "Spawn knife near victim", false, function(s) State.spawnKnifeAtPlayer = s end)
 addToggle(MurdererPage, "Wall check (Murderer)", true, function(s) State.murdererWallCheck = s end)
-addToggle(MurdererPage, "Shift Lock → nearest", false, function(s) State.murdererShiftLock = s end)
+addToggle(MurdererPage, "Crosshair lock → nearest", false, function(s) State.murdererCrosshair = s end)
 addToggle(MurdererPage, "Aimlock → nearest", false, function(s) State.murdererAimlock = s end)
 addToggle(MurdererPage, "Aimlock priority: Sheriff", false, function(s) State.murdererAimSheriff = s end)
 -- Auto knife throw loop
@@ -3159,7 +3207,52 @@ addButton(WorldPage, "Spectate cycle", function()
         end
     end)
 end)
+----------------------------------------------------------------
+-- TOUCH FLING (toggle)
+----------------------------------------------------------------
+-- Hold-velocity-spike fling: persistently pumps massive velocity into
+-- the local HRP so any contact yeets the other player. Toggle on/off.
+addSection(WorldPage, "Fling")
 
+local touchFlingActive = false
+local touchFlingConn = nil
+
+local function startTouchFling()
+    if touchFlingConn then touchFlingConn:Disconnect() touchFlingConn = nil end
+    local toggleDir = 0.1
+    touchFlingConn = RunService.Heartbeat:Connect(function()
+        if not touchFlingActive then return end
+        local char = safeGetCharacter()
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+        local saved = hrp.Velocity
+        hrp.Velocity = saved * 10000 + Vector3.new(0, 10000, 0)
+        RunService.RenderStepped:Wait()
+        hrp.Velocity = saved
+        RunService.Stepped:Wait()
+        hrp.Velocity = saved + Vector3.new(0, toggleDir, 0)
+        toggleDir = -toggleDir
+    end)
+end
+
+local function stopTouchFling()
+    if touchFlingConn then touchFlingConn:Disconnect() touchFlingConn = nil end
+    local hrp = safeGetHRP()
+    if hrp then hrp.Velocity = Vector3.zero end
+end
+
+addToggle(WorldPage, "Touch fling", false, function(s)
+    touchFlingActive = s
+    if s then
+        startTouchFling()
+        notify("Touch fling ON. Walk into players to fling them.", Theme.accent, 3)
+    else
+        stopTouchFling()
+        notify("Touch fling OFF.", Theme.accentAlt, 2)
+    end
+end)
+
+addText(WorldPage, "<font color='#999999'>Walking into players sends them flying. You may also fling yourself — watch your step.</font>")
 addSection(WorldPage, "Defense")
 
 local antiFlingConn, antiFlingMeConn
