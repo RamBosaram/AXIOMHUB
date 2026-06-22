@@ -414,6 +414,9 @@ FloatingLayer.Size = UDim2.new(1, 0, 1, 0)
 FloatingLayer.BackgroundTransparency = 1
 FloatingLayer.ZIndex = 5
 FloatingLayer.Active = false  -- не блокируем нижние input'ы
+
+local floatingButtons = {}
+
 -- Реестр всех pin-кнопок: label -> callback. Используется для восстановления
 -- floating-кнопок из конфига после перезапуска (callback нельзя сохранить в JSON).
 local PinRegistry = {}
@@ -433,7 +436,6 @@ local function saveFloatingButtonsState()
     State.floatingButtonsState = list
     ConfigManager:save(State)
 end
-local floatingButtons = {}
 
 local function makeFloatingButton(label, callback)
     if floatingButtons[label] then
