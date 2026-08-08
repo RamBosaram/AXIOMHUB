@@ -2520,47 +2520,86 @@ end
 ----------------------------------------------------------------
 -- SILENT AIM HOOK (Throw Silent Aim)
 ----------------------------------------------------------------
-local oldNamecall
-oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-    local method = getnamecallmethod()
+----------------------------------------------------------------
+-- SILENT AIM HOOK (Delta-compatible)
+----------------------------------------------------------------
+local knifeRemotePatched = false
 
-    if State.silentThrowAim
-    and method == "FireServer"
-    and typeof(self) == "Instance"
-    and self.Name == "KnifeThrown"
-    and self:IsA("RemoteEvent") then
+local function patchSilentAim()
+    if knifeRemotePatched then return end
+    local char = safeGetCharacter()
+    if not char then return end
+    local knife = char:FindFirstChild("Knife")
+    if not knife then return end
+    local events = knife:FindFirstChild("Events")
+    if not events then return end
+    local remote = events:FindFirstChild("KnifeThrown")
+    if not remote then return end
 
-        local ok = self.Parent and self.Parent.Name == "Events"
-                and self.Parent.Parent and self.Parent.Parent.Name == "Knife"
+    -- Сохраняем оригинальный FireServer
+    local originalFireServer = remote.FireServer
 
-        if ok and findMurderer() == LocalPlayer then
-            local target
-            if State.knifeFOVEnabled then
-                target = getPlayerInKnifeFOV() or findNearestPlayer()
-            else
-                target = findNearestPlayer()
-            end
-
-            if target and target.Character then
-                local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
-                if tHRP then
-                    local wallOk = not State.murdererWallCheck or hasLineOfSight(target)
-                    if wallOk then
-                        local ok2, predicted = pcall(getKnifePredicted, target)
-                        if not ok2 or not predicted then
-                            predicted = tHRP.Position
-                        end
-                        local animName = select(1, ...)
-                        local fromArg = select(2, ...)
-                        return oldNamecall(self, animName, fromArg, CFrame.new(predicted))
-                    end
-                end
-            end
+    -- Подменяем через newcclosure — не трогаем __namecall вообще
+    remote.FireServer = newcclosure(function(self, ...)
+        if not State.silentThrowAim or findMurderer() ~= LocalPlayer then
+            return originalFireServer(self, ...)
         end
-    end
 
-    return oldNamecall(self, ...)
-end)
+        local target
+        if State.knifeFOVEnabled then
+            target = getPlayerInKnifeFOV() or findNearestPlayer()
+        else
+            target = findNearestPlayer()
+        end
+
+        if not target or not target.Character then
+            return originalFireServer(self, ...)
+        end
+
+        local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
+        if not tHRP then
+            return originalFireServer(self, ...)
+        end
+
+        local wallOk = not State.murdererWallCheck or hasLineOfSight(target)
+        if not wallOk then
+            return originalFireServer(self, ...)
+        end
+
+        local ok2, predicted = pcall(getKnifePredicted, target)
+        if not ok2 or not predicted then
+            predicted = tHRP.Position
+        end
+
+        -- берём все оригинальные аргументы кроме последнего (to)
+        -- и подменяем только точку назначения
+        local args = {...}
+        args[#args] = CFrame.new(predicted)
+        return originalFireServer(self, table.unpack(args))
+    end)
+
+    knifeRemotePatched = true
+    notify("Silent aim patched.", Theme.accent, 2)
+end
+
+-- патчим при экипировке ножа
+local function watchKnife(char)
+    char.ChildAdded:Connect(function(child)
+        if child.Name == "Knife" then
+            task.wait(0.2)
+            knifeRemotePatched = false
+            patchSilentAim()
+        end
+    end)
+    -- если нож уже есть
+    if char:FindFirstChild("Knife") then
+        task.wait(0.2)
+        patchSilentAim()
+    end
+end
+
+if safeGetCharacter() then watchKnife(safeGetCharacter()) end
+LocalPlayer.CharacterAdded:Connect(watchKnife)
 ----------------------------------------------------------------
 -- VISUAL PAGE
 ----------------------------------------------------------------
