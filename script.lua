@@ -2517,6 +2517,7 @@ if char then
         end
     end)
 end
+
 ----------------------------------------------------------------
 -- SILENT AIM HOOK (Delta-compatible)
 ----------------------------------------------------------------
@@ -2547,26 +2548,42 @@ local function patchSilentAim()
         end
 
         if not target or not target.Character then
+            warn("[AXIOM] no target found")
             return originalFireServer(self, ...)
         end
 
         local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
         if not tHRP then
+            warn("[AXIOM] no tHRP")
             return originalFireServer(self, ...)
         end
 
         local wallOk = not State.murdererWallCheck or hasLineOfSight(target)
         if not wallOk then
+            warn("[AXIOM] wall blocked")
             return originalFireServer(self, ...)
         end
 
+        warn("[AXIOM] target:", target.Name)
+        warn("[AXIOM] tHRP position:", tostring(tHRP.Position))
+
         local ok2, predicted = pcall(getKnifePredicted, target)
+        warn("[AXIOM] pcall ok:", ok2, "| predicted:", tostring(predicted))
+
         if not ok2 or not predicted then
             predicted = tHRP.Position
+            warn("[AXIOM] fallback to tHRP.Position")
         end
 
         local args = {...}
+        warn("[AXIOM] args count:", #args)
+        for i, v in ipairs(args) do
+            warn("  arg["..i.."]:", typeof(v), tostring(v))
+        end
+
         args[#args] = CFrame.new(predicted)
+        warn("[AXIOM] final to:", tostring(args[#args]))
+
         return originalFireServer(self, table.unpack(args))
     end))
 
@@ -2590,7 +2607,7 @@ end
 
 if safeGetCharacter() then watchKnife(safeGetCharacter()) end
 LocalPlayer.CharacterAdded:Connect(watchKnife)
-
+    
 ----------------------------------------------------------------
 -- VISUAL PAGE
 ----------------------------------------------------------------
