@@ -2468,7 +2468,55 @@ if events and events:FindFirstChild("KnifeThrown") then
     events.KnifeThrown:FireServer("Throw", from, to)
 end
 end
+-- Патч GetNetworkPing для Delta совместимости
+-- Вставь это ПЕРЕД блоком -- SILENT AIM HOOK
+local function patchKnifeRemote()
+    local char = safeGetCharacter()
+    if not char then return end
+    local knife = char:FindFirstChild("Knife")
+    if not knife then return end
+    local events = knife:FindFirstChild("Events")
+    if not events then return end
+    local remote = events:FindFirstChild("KnifeThrown")
+    if not remote then return end
 
+    -- Delta подменяет self на remote внутри namecall
+    -- поэтому добавляем GetNetworkPing прямо на объект
+    local mt = getrawmetatable(remote)
+    if not mt then return end
+    local oldIndex = rawget(mt, "__index")
+    setreadonly(mt, false)
+    rawset(mt, "__index", function(t, k)
+        if k == "GetNetworkPing" then
+            return function() return LocalPlayer:GetNetworkPing() end
+        end
+        if typeof(oldIndex) == "function" then
+            return oldIndex(t, k)
+        end
+        return oldIndex and oldIndex[k]
+    end)
+    setreadonly(mt, true)
+end
+
+-- хукаем появление ножа в руках
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.3)
+    patchKnifeRemote()
+end)
+
+-- и сразу для текущего персонажа
+task.spawn(patchKnifeRemote)
+
+-- и когда нож экипируется
+local char = safeGetCharacter()
+if char then
+    char.ChildAdded:Connect(function(child)
+        if child.Name == "Knife" then
+            task.wait(0.1)
+            patchKnifeRemote()
+        end
+    end)
+end
 ----------------------------------------------------------------
 -- SILENT AIM HOOK (Throw Silent Aim)
 ----------------------------------------------------------------
@@ -2502,7 +2550,6 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                         if not ok2 or not predicted then
                             predicted = tHRP.Position
                         end
-                        -- arg[1]=string, arg[2]=from, arg[3]=to
                         local animName = select(1, ...)
                         local fromArg = select(2, ...)
                         return oldNamecall(self, animName, fromArg, CFrame.new(predicted))
@@ -3530,4 +3577,19 @@ end)
 openMenu()
 
 task.wait(0.5)
+task.spawn(function()
+    task.wait(2)
+    local char = safeGetCharacter()
+    if not char then warn("[AXIOM] no char") return end
+    local knife = char:FindFirstChild("Knife")
+    if not knife then warn("[AXIOM] no knife") return end
+    local events = knife:FindFirstChild("Events")
+    if not events then warn("[AXIOM] no events") return end
+    local remote = events:FindFirstChild("KnifeThrown")
+    if not remote then warn("[AXIOM] no remote") return end
+    local mt = getrawmetatable(remote)
+    warn("[AXIOM] metatable:", tostring(mt))
+    warn("[AXIOM] setreadonly exists:", tostring(setreadonly ~= nil))
+    warn("[AXIOM] getrawmetatable exists:", tostring(getrawmetatable ~= nil))
+end)
 notify("AXIOM 2.0 loaded · MM2", Theme.accent, 4)
