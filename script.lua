@@ -2501,10 +2501,11 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
 
                 if passWall then
                     local predicted = getKnifePredicted(target)
-                    -- arg[1] = from (рука), arg[2] = to (цель)
-                    -- явно передаём оба аргумента без unpack
                     local fromArg = select(1, ...)
-                    return oldNamecall(self, fromArg, CFrame.new(predicted))
+                    -- берём ротацию из from, позицию из predicted
+                    local toCFrame = CFrame.new(predicted) 
+                        * (fromArg - fromArg.Position)
+                    return oldNamecall(self, fromArg, toCFrame)
                 end
             end
         end
