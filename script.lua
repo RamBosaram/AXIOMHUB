@@ -2520,23 +2520,37 @@ end
 ----------------------------------------------------------------
 -- SILENT AIM HOOK (Delta-compatible)
 ----------------------------------------------------------------
-local knifeRemotePatched = false
+----------------------------------------------------------------
+-- SILENT AIM HOOK (Delta-compatible, gc deep patch)
+----------------------------------------------------------------
+local patchedRemotes = {}
 
-local function patchSilentAim()
-    if knifeRemotePatched then return end
-    local char = safeGetCharacter()
-    if not char then return end
-    local knife = char:FindFirstChild("Knife")
-    if not knife then return end
-    local events = knife:FindFirstChild("Events")
-    if not events then return end
-    local remote = events:FindFirstChild("KnifeThrown")
-    if not remote then return end
+local function findCachedFireRef(originalFS)
+    local results = {}
+    for _, obj in ipairs(getgc(true)) do
+        if type(obj) == "function" then
+            local i = 1
+            while true do
+                local ok, name, val = pcall(getupvalue, obj, i)
+                if not ok or name == nil then break end
+                if val == originalFS then
+                    results[#results+1] = {fn = obj, idx = i}
+                end
+                i = i + 1
+            end
+        end
+    end
+    return results
+end
 
-    local originalFireServer
-    originalFireServer = hookfunction(remote.FireServer, newcclosure(function(self, ...)
+local function deepPatchRemote(remote)
+    if patchedRemotes[remote] then return end
+    patchedRemotes[remote] = true
+
+    local originalFS
+    originalFS = hookfunction(remote.FireServer, newcclosure(function(self, ...)
         if not State.silentThrowAim or findMurderer() ~= LocalPlayer then
-            return originalFireServer(self, ...)
+            return originalFS(self, ...)
         end
 
         local target
@@ -2546,68 +2560,58 @@ local function patchSilentAim()
             target = findNearestPlayer()
         end
 
-        if not target or not target.Character then
-            warn("[AXIOM] no target found")
-            return originalFireServer(self, ...)
+        local tHRP = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        if not tHRP then return originalFS(self, ...) end
+
+        if State.murdererWallCheck and not hasLineOfSight(target) then
+            return originalFS(self, ...)
         end
 
-        local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
-        if not tHRP then
-            warn("[AXIOM] no tHRP")
-            return originalFireServer(self, ...)
-        end
-
-        local wallOk = not State.murdererWallCheck or hasLineOfSight(target)
-        if not wallOk then
-            warn("[AXIOM] wall blocked")
-            return originalFireServer(self, ...)
-        end
-
-        warn("[AXIOM] target:", target.Name)
-        warn("[AXIOM] tHRP position:", tostring(tHRP.Position))
-
-        local ok2, predicted = pcall(getKnifePredicted, target)
-        warn("[AXIOM] pcall ok:", ok2, "| predicted:", tostring(predicted))
-
-        if not ok2 or not predicted then
-            predicted = tHRP.Position
-            warn("[AXIOM] fallback to tHRP.Position")
-        end
+        local ok, predicted = pcall(getKnifePredicted, target)
+        if not ok or not predicted then predicted = tHRP.Position end
 
         local args = {...}
-        warn("[AXIOM] args count:", #args)
-        for i, v in ipairs(args) do
-            warn("  arg["..i.."]:", typeof(v), tostring(v))
+        if #args >= 3 then
+            args[3] = CFrame.new(predicted)
+        elseif #args == 2 then
+            args[2] = CFrame.new(predicted)
         end
 
-        args[#args] = CFrame.new(predicted)
-        warn("[AXIOM] final to:", tostring(args[#args]))
-
-        return originalFireServer(self, table.unpack(args))
+        warn("[AXIOM] silent aim firing to:", tostring(predicted))
+        return originalFS(self, table.unpack(args))
     end))
 
-    knifeRemotePatched = true
+    local hookedFS = remote.FireServer
+    local refs = findCachedFireRef(originalFS)
+    for _, ref in ipairs(refs) do
+        pcall(setupvalue, ref.fn, ref.idx, hookedFS)
+    end
+
+    warn("[AXIOM] deep patch done, refs:", #refs)
     notify("Silent aim patched.", Theme.accent, 2)
 end
 
-local function watchKnife(char)
-    char.ChildAdded:Connect(function(child)
-        if child.Name == "Knife" then
-            task.wait(0.2)
-            knifeRemotePatched = false
-            patchSilentAim()
-        end
-    end)
-    if char:FindFirstChild("Knife") then
-        task.wait(0.2)
-        patchSilentAim()
-    end
+local function onKnifeAdded(knife)
+    task.wait(0)
+    local events = knife:FindFirstChild("Events")
+    if not events then return end
+    local remote = events:FindFirstChild("KnifeThrown")
+    if not remote then return end
+    deepPatchRemote(remote)
 end
 
-if safeGetCharacter() then watchKnife(safeGetCharacter()) end
-LocalPlayer.CharacterAdded:Connect(watchKnife)
+local function watchChar(char)
+    patchedRemotes = {}
+    local knife = char:FindFirstChild("Knife")
+    if knife then onKnifeAdded(knife) end
+    char.ChildAdded:Connect(function(child)
+        if child.Name == "Knife" then onKnifeAdded(child) end
+    end)
+end
 
-    
+if safeGetCharacter() then watchChar(safeGetCharacter()) end
+LocalPlayer.CharacterAdded:Connect(watchChar)
+
 ----------------------------------------------------------------
 -- VISUAL PAGE
 ----------------------------------------------------------------
