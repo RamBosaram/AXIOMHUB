@@ -2471,23 +2471,42 @@ end
 ----------------------------------------------------------------
 -- SILENT AIM HOOK (Throw Silent Aim)
 ----------------------------------------------------------------
--- Перехватывает реальные броски ножа игроком и подменяет точку прицеливания
--- на цель (в FOV-круге или ближайшего). Визуально игрок сам кидает нож
--- (анимация замаха ~1-2с играет нормально), но в момент реального
--- FireServer мы переписываем аргумент `to` на predicted-точку цели.
---
--- Hook работает на уровне __namecall metamethod — это стандартный путь
--- для silent aim в Roblox-executors (Solara/Wave/Swift/Velocity все поддерживают).
 local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     local method = getnamecallmethod()
 
-    if method == "FireServer"
+    if State.silentThrowAim
+    and method == "FireServer"
     and typeof(self) == "Instance"
-    and self.Name == "KnifeThrown" then
-        warn("[AXIOM] KnifeThrown fires! arg count:", select("#", ...))
-        for i, v in ipairs({...}) do
-            warn("  arg["..i.."] type:", typeof(v), "| value:", tostring(v))
+    and self.Name == "KnifeThrown"
+    and self:IsA("RemoteEvent") then
+
+        local ok = self.Parent and self.Parent.Name == "Events"
+                and self.Parent.Parent and self.Parent.Parent.Name == "Knife"
+
+        if ok and findMurderer() == LocalPlayer then
+            local target
+            if State.knifeFOVEnabled then
+                target = getPlayerInKnifeFOV()
+                if not target then target = findNearestPlayer() end
+            else
+                target = findNearestPlayer()
+            end
+
+            if target and target.Character then
+                local passWall = true
+                if State.murdererWallCheck and not hasLineOfSight(target) then
+                    passWall = false
+                end
+
+                if passWall then
+                    local predicted = getKnifePredicted(target)
+                    -- arg[1] = from (рука), arg[2] = to (цель)
+                    -- явно передаём оба аргумента без unpack
+                    local fromArg = select(1, ...)
+                    return oldNamecall(self, fromArg, CFrame.new(predicted))
+                end
+            end
         end
     end
 
