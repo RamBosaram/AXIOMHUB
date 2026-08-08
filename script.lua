@@ -2505,6 +2505,10 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                     -- берём ротацию из from, позицию из predicted
                     local toCFrame = CFrame.new(predicted) 
                         * (fromArg - fromArg.Position)
+                        warn("[AXIOM] Silent aim firing to:", tostring(predicted))
+warn("[AXIOM] Target:", target.Name)
+warn("[AXIOM] passWall:", passWall)
+warn("[AXIOM] findMurderer == LocalPlayer:", findMurderer() == LocalPlayer)
                     return oldNamecall(self, fromArg, toCFrame)
                 end
             end
