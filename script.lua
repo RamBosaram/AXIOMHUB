@@ -2463,15 +2463,12 @@ local function knifeThrow(silent)
     local to = CFrame.new(predicted)
 
     local knife = char:WaitForChild("Knife", 1)
-    local events = knife and knife:FindFirstChild("Events")
-    if events and events:FindFirstChild("KnifeThrown") then
-        events.KnifeThrown:FireServer(from, to)
-    end
+local events = knife and knife:FindFirstChild("Events")
+if events and events:FindFirstChild("KnifeThrown") then
+    events.KnifeThrown:FireServer("Throw", from, to)
+end
 end
 
-----------------------------------------------------------------
--- SILENT AIM HOOK (Throw Silent Aim)
-----------------------------------------------------------------
 ----------------------------------------------------------------
 -- SILENT AIM HOOK (Throw Silent Aim)
 ----------------------------------------------------------------
@@ -2479,33 +2476,37 @@ local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     local method = getnamecallmethod()
 
-    if method == "FireServer"
+    if State.silentThrowAim
+    and method == "FireServer"
     and typeof(self) == "Instance"
     and self.Name == "KnifeThrown"
-    and self:IsA("RemoteEvent")
-    and State.silentThrowAim
-    and findMurderer() == LocalPlayer then
+    and self:IsA("RemoteEvent") then
 
-        local target
-        if State.knifeFOVEnabled then
-            target = getPlayerInKnifeFOV() or findNearestPlayer()
-        else
-            target = findNearestPlayer()
-        end
+        local ok = self.Parent and self.Parent.Name == "Events"
+                and self.Parent.Parent and self.Parent.Parent.Name == "Knife"
 
-        if target and target.Character then
-            local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
-            if tHRP then
-                local wallOk = not State.murdererWallCheck or hasLineOfSight(target)
-                if wallOk then
-                    local ok2, predicted = pcall(getKnifePredicted, target)
-                    if not ok2 or not predicted then
-                        predicted = tHRP.Position
+        if ok and findMurderer() == LocalPlayer then
+            local target
+            if State.knifeFOVEnabled then
+                target = getPlayerInKnifeFOV() or findNearestPlayer()
+            else
+                target = findNearestPlayer()
+            end
+
+            if target and target.Character then
+                local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
+                if tHRP then
+                    local wallOk = not State.murdererWallCheck or hasLineOfSight(target)
+                    if wallOk then
+                        local ok2, predicted = pcall(getKnifePredicted, target)
+                        if not ok2 or not predicted then
+                            predicted = tHRP.Position
+                        end
+                        -- arg[1]=string, arg[2]=from, arg[3]=to
+                        local animName = select(1, ...)
+                        local fromArg = select(2, ...)
+                        return oldNamecall(self, animName, fromArg, CFrame.new(predicted))
                     end
-                    local fromArg = select(1, ...)
-                    -- передаём oldNamecall напрямую с подменённым to
-                    -- oldNamecall не триггерит хук — это оригинальная функция
-                    return oldNamecall(self, fromArg, CFrame.new(predicted))
                 end
             end
         end
@@ -2513,7 +2514,6 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
 
     return oldNamecall(self, ...)
 end)
-
 ----------------------------------------------------------------
 -- VISUAL PAGE
 ----------------------------------------------------------------
