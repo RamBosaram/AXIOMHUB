@@ -2479,48 +2479,33 @@ local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     local method = getnamecallmethod()
 
-    if State.silentThrowAim
-    and method == "FireServer"
+    if method == "FireServer"
     and typeof(self) == "Instance"
     and self.Name == "KnifeThrown"
-    and self:IsA("RemoteEvent") then
+    and self:IsA("RemoteEvent")
+    and State.silentThrowAim
+    and findMurderer() == LocalPlayer then
 
-        local ok = self.Parent and self.Parent.Name == "Events"
-                and self.Parent.Parent and self.Parent.Parent.Name == "Knife"
+        local target
+        if State.knifeFOVEnabled then
+            target = getPlayerInKnifeFOV() or findNearestPlayer()
+        else
+            target = findNearestPlayer()
+        end
 
-        if ok and findMurderer() == LocalPlayer then
-            local target
-            if State.knifeFOVEnabled then
-                target = getPlayerInKnifeFOV()
-                if not target then target = findNearestPlayer() end
-            else
-                target = findNearestPlayer()
-            end
-
-            if target and target.Character then
-                local passWall = true
-                if State.murdererWallCheck and not hasLineOfSight(target) then
-                    passWall = false
-                end
-
-                if passWall then
-                    local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
-                    if not tHRP then
-                        return oldNamecall(self, ...)
-                    end
-
-                    local predicted
-                    local ok2, result = pcall(getKnifePredicted, target)
-                    if ok2 and result then
-                        predicted = result
-                    else
+        if target and target.Character then
+            local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
+            if tHRP then
+                local wallOk = not State.murdererWallCheck or hasLineOfSight(target)
+                if wallOk then
+                    local ok2, predicted = pcall(getKnifePredicted, target)
+                    if not ok2 or not predicted then
                         predicted = tHRP.Position
                     end
-
                     local fromArg = select(1, ...)
-                    -- FireServer напрямую минуя KnifeClient
-                    self:FireServer(fromArg, CFrame.new(predicted))
-                    return
+                    -- передаём oldNamecall напрямую с подменённым to
+                    -- oldNamecall не триггерит хук — это оригинальная функция
+                    return oldNamecall(self, fromArg, CFrame.new(predicted))
                 end
             end
         end
