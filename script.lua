@@ -2517,7 +2517,6 @@ if char then
         end
     end)
 end
-
 ----------------------------------------------------------------
 -- SILENT AIM HOOK (Delta-compatible)
 ----------------------------------------------------------------
@@ -2607,6 +2606,7 @@ end
 
 if safeGetCharacter() then watchKnife(safeGetCharacter()) end
 LocalPlayer.CharacterAdded:Connect(watchKnife)
+
     
 ----------------------------------------------------------------
 -- VISUAL PAGE
