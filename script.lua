@@ -2503,8 +2503,7 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                 end
 
                 if passWall then
-                    -- безопасный предикт без GetNetworkPing
-                    local tHRP = target.character:FindFirstChild("HumanoidRootPart")
+                    local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
                     if not tHRP then
                         return oldNamecall(self, ...)
                     end
@@ -2514,7 +2513,6 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                     if ok2 and result then
                         predicted = result
                     else
-                        -- fallback: просто позиция HRP без предикта
                         predicted = tHRP.Position
                     end
 
