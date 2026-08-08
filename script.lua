@@ -2518,9 +2518,6 @@ if char then
     end)
 end
 ----------------------------------------------------------------
--- SILENT AIM HOOK (Throw Silent Aim)
-----------------------------------------------------------------
-----------------------------------------------------------------
 -- SILENT AIM HOOK (Delta-compatible)
 ----------------------------------------------------------------
 local knifeRemotePatched = false
@@ -2536,11 +2533,8 @@ local function patchSilentAim()
     local remote = events:FindFirstChild("KnifeThrown")
     if not remote then return end
 
-    -- Сохраняем оригинальный FireServer
-    local originalFireServer = remote.FireServer
-
-    -- Подменяем через newcclosure — не трогаем __namecall вообще
-    remote.FireServer = newcclosure(function(self, ...)
+    local originalFireServer
+    originalFireServer = hookfunction(remote.FireServer, newcclosure(function(self, ...)
         if not State.silentThrowAim or findMurderer() ~= LocalPlayer then
             return originalFireServer(self, ...)
         end
@@ -2571,18 +2565,15 @@ local function patchSilentAim()
             predicted = tHRP.Position
         end
 
-        -- берём все оригинальные аргументы кроме последнего (to)
-        -- и подменяем только точку назначения
         local args = {...}
         args[#args] = CFrame.new(predicted)
         return originalFireServer(self, table.unpack(args))
-    end)
+    end))
 
     knifeRemotePatched = true
     notify("Silent aim patched.", Theme.accent, 2)
 end
 
--- патчим при экипировке ножа
 local function watchKnife(char)
     char.ChildAdded:Connect(function(child)
         if child.Name == "Knife" then
@@ -2591,7 +2582,6 @@ local function watchKnife(char)
             patchSilentAim()
         end
     end)
-    -- если нож уже есть
     if char:FindFirstChild("Knife") then
         task.wait(0.2)
         patchSilentAim()
@@ -2600,6 +2590,7 @@ end
 
 if safeGetCharacter() then watchKnife(safeGetCharacter()) end
 LocalPlayer.CharacterAdded:Connect(watchKnife)
+
 ----------------------------------------------------------------
 -- VISUAL PAGE
 ----------------------------------------------------------------
