@@ -2481,47 +2481,13 @@ end
 local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     local method = getnamecallmethod()
-    local args = {...}
 
-    -- Ловим только FireServer на KnifeThrown — всё остальное пропускаем как есть
-    if State.silentThrowAim
-       and method == "FireServer"
-       and typeof(self) == "Instance"
-       and self.Name == "KnifeThrown"
-       and self:IsA("RemoteEvent") then
-
-        -- Проверка что это именно MM2 knife throw event (не другой ремут с тем же именем):
-        -- родитель должен быть Events, родитель Events должен быть Knife
-        local ok = self.Parent and self.Parent.Name == "Events"
-                   and self.Parent.Parent and self.Parent.Parent.Name == "Knife"
-
-        if ok and findMurderer() == LocalPlayer then
-            -- Выбираем цель: FOV приоритет, иначе ближайший
-            local target
-            if State.knifeFOVEnabled then
-                target = getPlayerInKnifeFOV()
-                if not target then
-                    target = findNearestPlayer()
-                end
-            else
-                target = findNearestPlayer()
-            end
-
-            if target and target.Character then
-                -- Wall check
-                local passWall = true
-                if State.murdererWallCheck and not hasLineOfSight(target) then
-                    passWall = false
-                end
-
-                if passWall then
-                    local predicted = getKnifePredicted(target)
-                    -- args[1] = from (CFrame руки), args[2] = to (куда летит)
-                    -- Подменяем ТОЛЬКО to — from оставляем настоящим
-                    args[2] = CFrame.new(predicted)
-                    return oldNamecall(self, unpack(args))
-                end
-            end
+    if method == "FireServer"
+    and typeof(self) == "Instance"
+    and self.Name == "KnifeThrown" then
+        warn("[AXIOM] KnifeThrown fires! arg count:", select("#", ...))
+        for i, v in ipairs({...}) do
+            warn("  arg["..i.."] type:", typeof(v), "| value:", tostring(v))
         end
     end
 
