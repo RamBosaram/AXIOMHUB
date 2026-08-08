@@ -2518,7 +2518,9 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                     end
 
                     local fromArg = select(1, ...)
-                    return oldNamecall(self, fromArg, CFrame.new(predicted))
+                    -- FireServer напрямую минуя KnifeClient
+                    self:FireServer(fromArg, CFrame.new(predicted))
+                    return
                 end
             end
         end
@@ -2526,6 +2528,7 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
 
     return oldNamecall(self, ...)
 end)
+
 ----------------------------------------------------------------
 -- VISUAL PAGE
 ----------------------------------------------------------------
