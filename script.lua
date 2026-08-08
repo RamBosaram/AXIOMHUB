@@ -2485,6 +2485,13 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                 and self.Parent.Parent and self.Parent.Parent.Name == "Knife"
 
         if ok and findMurderer() == LocalPlayer then
+            -- логируем ВСЕ аргументы включая нулевой
+            local allArgs = {...}
+            warn("[AXIOM] total args:", #allArgs)
+            for i, v in ipairs(allArgs) do
+                warn("  ["..i.."] type:", typeof(v), "=", tostring(v))
+            end
+
             local target
             if State.knifeFOVEnabled then
                 target = getPlayerInKnifeFOV()
@@ -2501,15 +2508,22 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
 
                 if passWall then
                     local predicted = getKnifePredicted(target)
-                    local fromArg = select(1, ...)
-                    -- берём ротацию из from, позицию из predicted
-                    local toCFrame = CFrame.new(predicted) 
-                        * (fromArg - fromArg.Position)
-                        warn("[AXIOM] Silent aim firing to:", tostring(predicted))
-warn("[AXIOM] Target:", target.Name)
-warn("[AXIOM] passWall:", passWall)
-warn("[AXIOM] findMurderer == LocalPlayer:", findMurderer() == LocalPlayer)
-                    return oldNamecall(self, fromArg, toCFrame)
+                    -- пробуем: первый арг оставляем как есть,
+                    -- второй подменяем на нашу точку
+                    local a1 = allArgs[1]
+                    local a2 = allArgs[2]
+                    local a3 = allArgs[3]
+
+                    if typeof(a1) == "CFrame" and typeof(a2) == "CFrame" then
+                        -- сигнатура (from, to)
+                        return oldNamecall(self, a1, CFrame.new(predicted))
+                    elseif typeof(a2) == "CFrame" and typeof(a3) == "CFrame" then
+                        -- сигнатура (something, from, to)
+                        return oldNamecall(self, a1, a2, CFrame.new(predicted))
+                    elseif typeof(a1) == "CFrame" and not a2 then
+                        -- только from, to нет
+                        return oldNamecall(self, a1, CFrame.new(predicted))
+                    end
                 end
             end
         end
