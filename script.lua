@@ -2472,6 +2472,9 @@ end
 ----------------------------------------------------------------
 -- SILENT AIM HOOK (Throw Silent Aim)
 ----------------------------------------------------------------
+----------------------------------------------------------------
+-- SILENT AIM HOOK (Throw Silent Aim)
+----------------------------------------------------------------
 local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     local method = getnamecallmethod()
@@ -2501,8 +2504,7 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                 end
 
                 if passWall then
-                    -- безопасный предикт без GetNetworkPing
-                    local tHRP = target.character:FindFirstChild("HumanoidRootPart")
+                    local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
                     if not tHRP then
                         return oldNamecall(self, ...)
                     end
@@ -2512,15 +2514,11 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                     if ok2 and result then
                         predicted = result
                     else
-                        -- fallback: просто позиция HRP без предикта
                         predicted = tHRP.Position
                     end
 
                     local fromArg = select(1, ...)
-                    return 
-                   warn("[AXIOM] THROWING TO:", tostring(predicted))
-warn("[AXIOM] fromArg:", tostring(fromArg))
-                   oldNamecall(self, fromArg, CFrame.new(predicted))
+                    return oldNamecall(self, fromArg, CFrame.new(predicted))
                 end
             end
         end
