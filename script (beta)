@@ -1,12 +1,11 @@
 --[[
     AXIOM 2.0 — MM2 Suite
-    Design-first build: proper Saturn, bordered widgets, big text, no pins
+    Box widgets with shape selector + float toggle
+    Per-role ESP boxes, maximalist space background
 ]]
 
 if not game:IsLoaded() then
-    game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = "AXIOM", Text = "Loading...", Duration = 5
-    })
+    game:GetService("StarterGui"):SetCore("SendNotification", {Title = "AXIOM", Text = "Loading...", Duration = 5})
     game.Loaded:Wait()
 end
 
@@ -25,11 +24,10 @@ local LocalPlayer = Players.LocalPlayer
 ----------------------------------------------------------------
 local CONFIG_FILE = "AXIOM_MM2_config.json"
 local BLACKLIST_KEYS = {
-    hubOpen = true, floatingButtonsState = true,
-    fly = true, noclip = true, touchFling = true,
+    hubOpen = true, fly = true, noclip = true, touchFling = true,
     autoShoot = true, autoKnifeThrow = true, killAuraOn = true,
-    silentThrowAim = true, invisible = true, cameraNoclip = true,
-    infJump = true, streamProof = true,
+    silentThrowAim = true, invisible = true, infJump = true,
+    streamProof = true, aiState = true,
 }
 
 local ConfigManager = {}
@@ -74,11 +72,19 @@ ConfigManager:load()
 -- STATE
 ----------------------------------------------------------------
 local State = {
-    espInnocent = false, espMurderer = false, espSheriff = false,
-    espGunDrop = false, espKnife = false,
+    -- Highlight ESP (per role)
+    hlInnocent = false, hlMurderer = false, hlSheriff = false,
+    -- Box ESP (per role)
+    boxInnocent = false, boxMurderer = false, boxSheriff = false,
+    -- Tracer ESP (per role)
+    tracerInnocent = false, tracerMurderer = false, tracerSheriff = false,
+    -- Object ESP
+    objGunDrop = false, objKnife = false,
+    -- Info
     showDistance = false, showNickname = false,
     roundTimer = false, roleReveal = false,
-    tracerLines = false, crosshair = false, hideSelfESP = false,
+    crosshair = false, hideSelfESP = false,
+    -- Combat
     aimlockTarget = nil, aimlockActive = false,
     sheriffAimlock = false, murdererAimlock = false,
     silentThrowAim = false, autoKnifeThrow = false,
@@ -93,13 +99,17 @@ local State = {
     sheriffPrioritizePing = false, sheriffPredictJump = false, sheriffPredictLag = false,
     sheriffMaxSim = 60, sheriffInterval = 100, sheriffHMul = 100, sheriffVMul = 100,
     sheriffOffsetX = 0, sheriffOffsetY = 0, sheriffOffsetZ = 0,
+    -- Movement
     fly = false, flySpeed = 50, infJump = false, infJumpLimit2 = false,
     loopWSFOV = false, ws = 16, fov = 70, noclip = false,
     invisible = false, ctrlClickTP = false,
+    -- Fling
     touchFling = false,
+    -- Anti
     antiFling = false, antiVoid = false, antiAFK = false,
+    -- Settings
     uiSounds = true, streamProof = false, fpsCounter = false,
-    hubOpen = true, floatingButtonsState = {},
+    hubOpen = true,
 }
 ConfigManager:apply(State)
 
@@ -116,7 +126,7 @@ local Theme = {
     accentDeep = Color3.fromRGB(75, 50, 180),
     neon = Color3.fromRGB(200, 150, 255),
     primary = Color3.fromRGB(14, 12, 18),
-    secondary = Color3.fromRGB(20, 16, 28),
+    secondary = Color3.fromRGB(22, 18, 30),
     danger = Color3.fromRGB(255, 50, 80),
     success = Color3.fromRGB(80, 255, 120),
     bgGrad = ColorSequence.new({
@@ -150,25 +160,21 @@ local function safeHum()
     local c = safeChar()
     return c and c:FindFirstChildOfClass("Humanoid")
 end
-
 local function randomString(len)
     len = len or math.random(10, 20)
     local out = {}
     for i = 1, len do out[i] = string.char(math.random(65, 90)) end
     return table.concat(out)
 end
-
 local function lighten(c, amt)
     amt = amt or 0.3
     return Color3.new(math.min(1, c.R + amt), math.min(1, c.G + amt), math.min(1, c.B + amt))
 end
-
 local function getMap()
     for _, o in ipairs(workspace:GetChildren()) do
         if o:FindFirstChild("CoinContainer") and o:FindFirstChild("Spawns") then return o end
     end
 end
-
 local function setCharTransparency(char, t)
     for _, d in ipairs(char:GetDescendants()) do
         if d:IsA("BasePart") or d:IsA("Decal") then d.Transparency = t end
@@ -212,32 +218,22 @@ end
 ----------------------------------------------------------------
 local soundPart = Instance.new("Part")
 soundPart.Parent = workspace
-soundPart.Transparency = 1
-soundPart.CanCollide = false
-soundPart.Anchored = true
+soundPart.Transparency = 1 soundPart.CanCollide = false soundPart.Anchored = true
 soundPart.Position = Vector3.new(0, 1000, 0)
 
 local Sounds = {}
 function Sounds:init()
-    self.click = Instance.new("Sound")
-    self.click.SoundId = "rbxassetid://6383304752"
-    self.click.Volume = 0.3
-    self.click.Parent = soundPart
-    self.toggleOn = Instance.new("Sound")
-    self.toggleOn.SoundId = "rbxassetid://6383304752"
-    self.toggleOn.Volume = 0.3
-    self.toggleOn.PlaybackSpeed = 1.2
-    self.toggleOn.Parent = soundPart
-    self.toggleOff = Instance.new("Sound")
-    self.toggleOff.SoundId = "rbxassetid://6383304752"
-    self.toggleOff.Volume = 0.25
-    self.toggleOff.PlaybackSpeed = 0.8
-    self.toggleOff.Parent = soundPart
-    self.tab = Instance.new("Sound")
-    self.tab.SoundId = "rbxassetid://6383304752"
-    self.tab.Volume = 0.2
-    self.tab.PlaybackSpeed = 1.5
-    self.tab.Parent = soundPart
+    local ids = {"rbxassetid://6383304752", "rbxassetid://6383304752", "rbxassetid://6383304752", "rbxassetid://6383304752"}
+    local speeds = {1, 1.2, 0.8, 1.5}
+    local vols = {0.3, 0.3, 0.25, 0.2}
+    local names = {"click", "toggleOn", "toggleOff", "tab"}
+    for i = 1, 4 do
+        self[names[i]] = Instance.new("Sound")
+        self[names[i]].SoundId = ids[i]
+        self[names[i]].Volume = vols[i]
+        self[names[i]].PlaybackSpeed = speeds[i]
+        self[names[i]].Parent = soundPart
+    end
 end
 function Sounds:play(name)
     if not State.uiSounds then return end
@@ -326,18 +322,18 @@ end
 ----------------------------------------------------------------
 local function safeClick(target, onClick)
     target.Active = true
-    local activeInput = nil
+    local ai = nil
     target.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
-            if activeInput then return end
-            activeInput = input
+            if ai then return end
+            ai = input
             local sc
             sc = input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     sc:Disconnect()
-                    if activeInput == input then
-                        activeInput = nil
+                    if ai == input then
+                        ai = nil
                         local pos = input.Position
                         local ap = target.AbsolutePosition
                         local as = target.AbsoluteSize
@@ -361,9 +357,7 @@ local function makeDraggable(frame, handle)
         if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
             if ai then return end
-            ai = input
-            ds = input.Position
-            sp = frame.Position
+            ai = input ds = input.Position sp = frame.Position
             local sc
             sc = input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
@@ -378,57 +372,58 @@ local function makeDraggable(frame, handle)
         if input.UserInputType ~= Enum.UserInputType.MouseMovement
         and input.UserInputType ~= Enum.UserInputType.Touch then return end
         local delta = input.Position - ds
-        frame.Position = UDim2.new(
-            sp.X.Scale, sp.X.Offset + delta.X,
-            sp.Y.Scale, sp.Y.Offset + delta.Y
-        )
+        frame.Position = UDim2.new(sp.X.Scale, sp.X.Offset + delta.X, sp.Y.Scale, sp.Y.Offset + delta.Y)
     end)
 end
 
 ----------------------------------------------------------------
--- SPACE BACKGROUND — PROPER SATURN
+-- SPACE BACKGROUND — MAXIMALIST
 ----------------------------------------------------------------
 local function buildSpaceBackground(parent)
     local stars = {}
 
     local bg = Instance.new("Frame", parent)
     bg.Size = UDim2.new(1, 0, 1, 0)
-    bg.BackgroundColor3 = Color3.fromRGB(5, 3, 10)
+    bg.BackgroundColor3 = Color3.fromRGB(4, 2, 8)
     bg.BorderSizePixel = 0
     bg.ZIndex = 0
     Instance.new("UICorner", bg).CornerRadius = UDim.new(0, 14)
 
     local bgGrad = Instance.new("UIGradient", bg)
     bgGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(4, 2, 8)),
-        ColorSequenceKeypoint.new(0.25, Color3.fromRGB(10, 6, 18)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(5, 3, 12)),
-        ColorSequenceKeypoint.new(0.75, Color3.fromRGB(12, 8, 22)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(6, 4, 14)),
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(3, 2, 6)),
+        ColorSequenceKeypoint.new(0.2, Color3.fromRGB(8, 5, 16)),
+        ColorSequenceKeypoint.new(0.4, Color3.fromRGB(4, 3, 10)),
+        ColorSequenceKeypoint.new(0.6, Color3.fromRGB(10, 7, 20)),
+        ColorSequenceKeypoint.new(0.8, Color3.fromRGB(5, 3, 12)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(12, 8, 24)),
     })
     bgGrad.Rotation = 90
 
-    -- Nebula clouds
+    -- Deep nebula (12 layers)
     local nebColors = {
         Color3.fromRGB(70, 25, 110), Color3.fromRGB(35, 50, 130),
         Color3.fromRGB(110, 35, 90), Color3.fromRGB(50, 15, 80),
         Color3.fromRGB(25, 45, 100), Color3.fromRGB(90, 30, 120),
-        Color3.fromRGB(40, 60, 140),
+        Color3.fromRGB(40, 60, 140), Color3.fromRGB(80, 20, 100),
+        Color3.fromRGB(30, 40, 110), Color3.fromRGB(100, 40, 130),
+        Color3.fromRGB(45, 30, 90), Color3.fromRGB(60, 50, 120),
     }
-    for i = 1, 7 do
+    for i = 1, 12 do
         local cloud = Instance.new("Frame", bg)
-        local sz = math.random(250, 500)
+        local sz = math.random(200, 600)
         cloud.Size = UDim2.fromOffset(sz, sz)
-        cloud.Position = UDim2.new(math.random(-30, 90) / 100, 0, math.random(-30, 90) / 100, 0)
+        cloud.Position = UDim2.new(math.random(-40, 100) / 100, 0, math.random(-40, 100) / 100, 0)
         cloud.BackgroundColor3 = nebColors[i]
-        cloud.BackgroundTransparency = 0.9
+        cloud.BackgroundTransparency = 0.88 + math.random() * 0.05
         cloud.BorderSizePixel = 0
         cloud.ZIndex = 1
         Instance.new("UICorner", cloud).CornerRadius = UDim.new(1, 0)
         local cg = Instance.new("UIGradient", cloud)
         cg.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 0.0),
-            NumberSequenceKeypoint.new(0.4, 0.3),
+            NumberSequenceKeypoint.new(0.3, 0.15),
+            NumberSequenceKeypoint.new(0.7, 0.5),
             NumberSequenceKeypoint.new(1, 1.0),
         })
         cg.Rotation = math.random(0, 360)
@@ -436,18 +431,18 @@ local function buildSpaceBackground(parent)
         local sp = cloud.Position
         task.spawn(function()
             while cloud.Parent do
-                TweenService:Create(cloud, TweenInfo.new(math.random(20, 40), Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-                    Position = sp + UDim2.new(math.random(-30, 30) / 1000, 0, math.random(-20, 20) / 1000, 0)
+                TweenService:Create(cloud, TweenInfo.new(math.random(25, 50), Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+                    Position = sp + UDim2.new(math.random(-40, 40) / 1000, 0, math.random(-30, 30) / 1000, 0)
                 }):Play()
-                TweenService:Create(cg, TweenInfo.new(math.random(25, 50), Enum.EasingStyle.Linear), {
-                    Rotation = sr + math.random(-40, 40)
+                TweenService:Create(cg, TweenInfo.new(math.random(30, 60), Enum.EasingStyle.Linear), {
+                    Rotation = sr + math.random(-50, 50)
                 }):Play()
-                task.wait(math.random(20, 40))
+                task.wait(math.random(25, 50))
             end
         end)
     end
 
-    -- Star field — 5 layers
+    -- Star field — 7 layers (250+ stars)
     local function makeStars(count, z, sMin, sMax, tMin, tMax)
         for i = 1, count do
             local star = Instance.new("Frame", bg)
@@ -455,67 +450,81 @@ local function buildSpaceBackground(parent)
             star.Size = UDim2.fromOffset(sz, sz)
             star.Position = UDim2.new(math.random(0, 1000) / 1000, 0, math.random(0, 1000) / 1000, 0)
             local h = math.random()
-            if h < 0.6 then star.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-            elseif h < 0.75 then star.BackgroundColor3 = Color3.fromRGB(200, 220, 255)
-            elseif h < 0.88 then star.BackgroundColor3 = Color3.fromRGB(255, 240, 200)
-            elseif h < 0.95 then star.BackgroundColor3 = Color3.fromRGB(255, 200, 150)
+            if h < 0.55 then star.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+            elseif h < 0.7 then star.BackgroundColor3 = Color3.fromRGB(200, 220, 255)
+            elseif h < 0.82 then star.BackgroundColor3 = Color3.fromRGB(255, 240, 200)
+            elseif h < 0.92 then star.BackgroundColor3 = Color3.fromRGB(255, 200, 150)
             else star.BackgroundColor3 = Color3.fromRGB(200, 180, 255) end
             star.BackgroundTransparency = math.random(tMin, tMax) / 100
             star.BorderSizePixel = 0
             star.ZIndex = z
             Instance.new("UICorner", star).CornerRadius = UDim.new(1, 0)
             stars[#stars+1] = star
+            -- Glow for larger stars
             if sz >= 2.5 then
                 local glow = Instance.new("Frame", bg)
-                glow.Size = UDim2.fromOffset(sz * 3, sz * 3)
+                local gsz = sz * (2 + math.random() * 2)
+                glow.Size = UDim2.fromOffset(gsz, gsz)
                 glow.Position = star.Position
                 glow.BackgroundColor3 = star.BackgroundColor3
-                glow.BackgroundTransparency = 0.85
+                glow.BackgroundTransparency = 0.82 + math.random() * 0.08
                 glow.BorderSizePixel = 0
                 glow.ZIndex = z - 1
                 Instance.new("UICorner", glow).CornerRadius = UDim.new(1, 0)
                 stars[#stars+1] = glow
+                -- Second glow layer
+                local glow2 = Instance.new("Frame", bg)
+                glow2.Size = UDim2.fromOffset(gsz * 1.8, gsz * 1.8)
+                glow2.Position = star.Position
+                glow2.BackgroundColor3 = star.BackgroundColor3
+                glow2.BackgroundTransparency = 0.95
+                glow2.BorderSizePixel = 0
+                glow2.ZIndex = z - 2
+                Instance.new("UICorner", glow2).CornerRadius = UDim.new(1, 0)
+                stars[#stars+1] = glow2
             end
         end
     end
-    makeStars(50, 2, 6, 12, 35, 65)
-    makeStars(35, 3, 10, 16, 20, 45)
-    makeStars(25, 4, 14, 22, 10, 30)
-    makeStars(15, 5, 18, 28, 5, 20)
-    makeStars(10, 6, 22, 35, 0, 15)
+    makeStars(60, 2, 5, 10, 40, 70)
+    makeStars(45, 3, 8, 14, 25, 50)
+    makeStars(35, 4, 12, 18, 15, 35)
+    makeStars(25, 5, 16, 24, 8, 25)
+    makeStars(20, 6, 20, 30, 3, 18)
+    makeStars(15, 7, 24, 36, 0, 12)
+    makeStars(10, 8, 30, 45, 0, 8)
 
     -- Twinkle
     task.spawn(function()
         while bg.Parent do
-            for _ = 1, 12 do
+            for _ = 1, 15 do
                 local idx = math.random(1, #stars)
                 local s = stars[idx]
                 if s and s.Parent then
-                    TweenService:Create(s, TweenInfo.new(math.random(8, 25) / 10, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-                        BackgroundTransparency = math.random(5, 75) / 100
+                    TweenService:Create(s, TweenInfo.new(math.random(10, 30) / 10, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+                        BackgroundTransparency = math.random(3, 80) / 100
                     }):Play()
                 end
             end
-            task.wait(0.3)
+            task.wait(0.25)
         end
     end)
 
-    -- SATURN — proper horizontal rings with tilt
+    -- SATURN — proper horizontal rings, tilt 26.7, Cassini Division
     pcall(function()
         local viewport = Instance.new("ViewportFrame", bg)
         viewport.Size = UDim2.new(1, 0, 1, 0)
         viewport.BackgroundTransparency = 1
-        viewport.ZIndex = 3
-        viewport.Ambient = Color3.fromRGB(40, 25, 60)
+        viewport.ZIndex = 4
+        viewport.Ambient = Color3.fromRGB(35, 22, 55)
         viewport.LightDirection = Vector3.new(-1, -0.5, 1)
 
         local cam = Instance.new("Camera")
-        cam.CFrame = CFrame.new(Vector3.new(0, 4, -16), Vector3.new(0, 0, 0))
+        cam.CFrame = CFrame.new(Vector3.new(0, 4, -15), Vector3.new(0, 0, 0))
         viewport.CurrentCamera = cam
 
         local TILT = math.rad(26.7)
 
-        -- Planet body
+        -- Planet
         local planet = Instance.new("Part")
         planet.Shape = Enum.PartType.Ball
         planet.Size = Vector3.new(4, 4, 4)
@@ -536,41 +545,57 @@ local function buildSpaceBackground(parent)
         atmos.Anchored = true
         atmos.Parent = viewport
 
-        -- Ring system — proper horizontal orientation with tilt
-        -- Structure: C Ring (faint) -> B Ring (bright) -> Cassini Division (gap) -> A Ring -> F Ring
-        local ringDefs = {
-            -- {radius, thickness, color, transparency}
-            -- C Ring (inner, faint)
-            {2.4, 0.04, Color3.fromRGB(180, 160, 120), 0.7},
-            {2.6, 0.04, Color3.fromRGB(190, 170, 130), 0.65},
-            -- B Ring (brightest)
-            {2.8, 0.03, Color3.fromRGB(235, 210, 160), 0.1},
-            {3.0, 0.03, Color3.fromRGB(240, 215, 165), 0.05},
-            {3.2, 0.03, Color3.fromRGB(245, 220, 170), 0.08},
-            {3.4, 0.03, Color3.fromRGB(235, 210, 160), 0.12},
-            {3.6, 0.03, Color3.fromRGB(240, 215, 165), 0.06},
-            -- Cassini Division (gap — no ring here, skip 3.8)
-            -- A Ring
-            {4.0, 0.03, Color3.fromRGB(220, 195, 145), 0.2},
-            {4.2, 0.03, Color3.fromRGB(225, 200, 150), 0.18},
-            {4.4, 0.03, Color3.fromRGB(215, 190, 140), 0.25},
-            {4.6, 0.03, Color3.fromRGB(210, 185, 135), 0.3},
-            -- F Ring (thin, outer)
-            {4.9, 0.02, Color3.fromRGB(200, 175, 125), 0.5},
+        -- Atmospheric bands (thin discs at different Y heights)
+        local bandData = {
+            {y = 1.5, c = Color3.fromRGB(235, 210, 160)},
+            {y = 0.8, c = Color3.fromRGB(195, 165, 115)},
+            {y = 0.2, c = Color3.fromRGB(225, 200, 150)},
+            {y = -0.5, c = Color3.fromRGB(205, 175, 125)},
+            {y = -1.3, c = Color3.fromRGB(230, 205, 155)},
         }
+        local bandParts = {}
+        for _, bd in ipairs(bandData) do
+            local band = Instance.new("Part")
+            band.Shape = Enum.PartType.Cylinder
+            band.Size = Vector3.new(0.01, 4.1, 4.1)
+            band.Color = bd.c
+            band.Material = Enum.Material.SmoothPlastic
+            band.Anchored = true
+            band.Parent = viewport
+            band.CFrame = CFrame.new(0, bd.y, 0) * CFrame.Angles(0, 0, math.rad(90))
+            bandParts[#bandParts+1] = {part = band, y = bd.y}
+        end
 
+        -- Ring system — horizontal + tilted, with Cassini Division
+        local ringDefs = {
+            -- C Ring (inner, faint)
+            {r = 2.3, t = 0.04, c = Color3.fromRGB(170, 150, 110), tr = 0.75},
+            {r = 2.5, t = 0.04, c = Color3.fromRGB(185, 165, 125), tr = 0.65},
+            -- B Ring (brightest)
+            {r = 2.7, t = 0.03, c = Color3.fromRGB(240, 215, 165), tr = 0.08},
+            {r = 2.9, t = 0.03, c = Color3.fromRGB(245, 220, 170), tr = 0.05},
+            {r = 3.1, t = 0.03, c = Color3.fromRGB(250, 225, 175), tr = 0.03},
+            {r = 3.3, t = 0.03, c = Color3.fromRGB(240, 215, 165), tr = 0.06},
+            {r = 3.5, t = 0.03, c = Color3.fromRGB(245, 220, 170), tr = 0.1},
+            -- Cassini Division (gap — skip 3.7)
+            -- A Ring
+            {r = 3.9, t = 0.03, c = Color3.fromRGB(225, 200, 150), tr = 0.2},
+            {r = 4.1, t = 0.03, c = Color3.fromRGB(220, 195, 145), tr = 0.18},
+            {r = 4.3, t = 0.03, c = Color3.fromRGB(215, 190, 140), tr = 0.25},
+            {r = 4.5, t = 0.03, c = Color3.fromRGB(210, 185, 135), tr = 0.3},
+            -- F Ring (thin, outer)
+            {r = 4.8, t = 0.02, c = Color3.fromRGB(200, 175, 125), tr = 0.5},
+        }
         local ringParts = {}
         for _, def in ipairs(ringDefs) do
             local ring = Instance.new("Part")
             ring.Shape = Enum.PartType.Cylinder
-            -- Cylinder axis is X by default. Size = (thickness, diameter, diameter)
-            ring.Size = Vector3.new(def[2], def[1] * 2, def[1] * 2)
-            ring.Color = def[3]
+            ring.Size = Vector3.new(def.t, def.r * 2, def.r * 2)
+            ring.Color = def.c
             ring.Material = Enum.Material.Neon
-            ring.Transparency = def[4]
+            ring.Transparency = def.tr
             ring.Anchored = true
             ring.Parent = viewport
-            -- Make horizontal: rotate 90 on Z, then tilt on X
             ring.CFrame = CFrame.new(0, 0, 0) * CFrame.Angles(TILT, 0, 0) * CFrame.Angles(0, 0, math.rad(90))
             ringParts[#ringParts+1] = ring
         end
@@ -587,37 +612,48 @@ local function buildSpaceBackground(parent)
 
         -- Distant planets
         local p1 = Instance.new("Part")
-        p1.Shape = Enum.PartType.Ball
-        p1.Size = Vector3.new(1.5, 1.5, 1.5)
-        p1.Color = Color3.fromRGB(85, 45, 125)
-        p1.Material = Enum.Material.Neon
-        p1.Position = Vector3.new(-15, 5, -25)
-        p1.Anchored = true
-        p1.Parent = viewport
+        p1.Shape = Enum.PartType.Ball p1.Size = Vector3.new(1.5, 1.5, 1.5)
+        p1.Color = Color3.fromRGB(85, 45, 125) p1.Material = Enum.Material.Neon
+        p1.Position = Vector3.new(-14, 5, -22) p1.Anchored = true p1.Parent = viewport
 
         local p2 = Instance.new("Part")
-        p2.Shape = Enum.PartType.Ball
-        p2.Size = Vector3.new(1, 1, 1)
-        p2.Color = Color3.fromRGB(50, 100, 200)
-        p2.Material = Enum.Material.Neon
-        p2.Position = Vector3.new(16, -4, -28)
-        p2.Anchored = true
-        p2.Parent = viewport
+        p2.Shape = Enum.PartType.Ball p2.Size = Vector3.new(1, 1, 1)
+        p2.Color = Color3.fromRGB(50, 100, 200) p2.Material = Enum.Material.Neon
+        p2.Position = Vector3.new(15, -4, -25) p2.Anchored = true p2.Parent = viewport
 
-        -- 3D background stars
+        -- Distant galaxy (spiral — cluster of small parts)
+        for i = 1, 30 do
+            local gp = Instance.new("Part")
+            gp.Shape = Enum.PartType.Ball
+            local sz = math.random() * 0.08 + 0.02
+            gp.Size = Vector3.new(sz, sz, sz)
+            local angle = i * 0.4
+            local dist = i * 0.3
+            gp.Position = Vector3.new(
+                math.cos(angle) * dist - 12,
+                math.sin(angle) * dist * 0.3 + 8,
+                math.sin(angle) * dist - 30
+            )
+            gp.Color = Color3.fromRGB(200, 180, 255)
+            gp.Material = Enum.Material.Neon
+            gp.Anchored = true
+            gp.Parent = viewport
+        end
+
+        -- 3D background stars (80)
         local stars3D = {}
-        for i = 1, 50 do
+        for i = 1, 80 do
             local star = Instance.new("Part")
             star.Shape = Enum.PartType.Ball
-            local sz = math.random() * 0.12 + 0.03
+            local sz = math.random() * 0.12 + 0.02
             star.Size = Vector3.new(sz, sz, sz)
             local c = math.random()
-            if c < 0.6 then star.Color = Color3.fromRGB(255, 255, 255)
-            elseif c < 0.8 then star.Color = Color3.fromRGB(200, 220, 255)
-            elseif c < 0.9 then star.Color = Color3.fromRGB(255, 230, 200)
+            if c < 0.55 then star.Color = Color3.fromRGB(255, 255, 255)
+            elseif c < 0.75 then star.Color = Color3.fromRGB(200, 220, 255)
+            elseif c < 0.88 then star.Color = Color3.fromRGB(255, 230, 200)
             else star.Color = Color3.fromRGB(255, 200, 150) end
             star.Material = Enum.Material.Neon
-            star.Position = Vector3.new(math.random(-35, 35), math.random(-25, 25), math.random(-45, -12))
+            star.Position = Vector3.new(math.random(-40, 40), math.random(-30, 30), math.random(-50, -10))
             star.Anchored = true
             star.Parent = viewport
             stars3D[#stars3D+1] = star
@@ -627,14 +663,18 @@ local function buildSpaceBackground(parent)
         local angle = 0
         task.spawn(function()
             while viewport.Parent do
-                angle = angle + 0.0015
+                angle = angle + 0.0012
                 local breath = math.sin(angle * 8) * 0.3
-                local x = math.cos(angle) * 16
-                local z = math.sin(angle) * 16
+                local x = math.cos(angle) * 15
+                local z = math.sin(angle) * 15
                 local y = 4 + math.sin(angle * 0.3) * 2 + breath
                 cam.CFrame = CFrame.new(Vector3.new(x, y, z), Vector3.new(0, 0, 0))
                 planet.CFrame = CFrame.Angles(0, angle * 0.3, 0)
                 atmos.CFrame = CFrame.Angles(0, angle * 0.3, 0)
+                -- Bands rotate with planet
+                for _, bd in ipairs(bandParts) do
+                    bd.part.CFrame = CFrame.new(0, bd.y, 0) * CFrame.Angles(0, angle * 0.3, 0) * CFrame.Angles(0, 0, math.rad(90))
+                end
                 -- Rings: spin + tilt + horizontal
                 for _, ring in ipairs(ringParts) do
                     ring.CFrame = CFrame.new(0, 0, 0)
@@ -648,10 +688,11 @@ local function buildSpaceBackground(parent)
                     math.sin(angle * 2.5) * 9
                 )
                 atmos.Transparency = 0.85 + math.sin(angle * 15) * 0.05
-                for i = 1, 4 do
+                -- 3D star twinkle
+                for i = 1, 5 do
                     local idx = math.random(1, #stars3D)
                     local s = stars3D[idx]
-                    if s and s.Parent then s.Transparency = math.random() * 0.6 end
+                    if s and s.Parent then s.Transparency = math.random() * 0.7 end
                 end
                 task.wait(0.016)
             end
@@ -663,8 +704,7 @@ local function buildSpaceBackground(parent)
         local star = Instance.new("Frame", bg)
         star.Size = UDim2.fromOffset(120, 2)
         star.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-        star.BorderSizePixel = 0
-        star.ZIndex = 7
+        star.BorderSizePixel = 0 star.ZIndex = 9
         Instance.new("UICorner", star).CornerRadius = UDim.new(1, 0)
         local g = Instance.new("UIGradient", star)
         g.Transparency = NumberSequence.new({
@@ -690,7 +730,7 @@ local function buildSpaceBackground(parent)
     end
     task.spawn(function()
         while bg.Parent do
-            task.wait(math.random(5, 12))
+            task.wait(math.random(4, 10))
             if bg.Parent then spawnShootingStar() end
         end
     end)
@@ -698,15 +738,13 @@ local function buildSpaceBackground(parent)
     -- Vignette
     local v = Instance.new("Frame", parent)
     v.Size = UDim2.new(1, 0, 1, 0)
-    v.BackgroundTransparency = 1
-    v.BorderSizePixel = 0
-    v.ZIndex = 8
+    v.BackgroundTransparency = 1 v.BorderSizePixel = 0 v.ZIndex = 10
     Instance.new("UICorner", v).CornerRadius = UDim.new(0, 14)
     local vg = Instance.new("UIGradient", v)
     vg.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 0.4),
+        NumberSequenceKeypoint.new(0, 0.35),
         NumberSequenceKeypoint.new(0.7, 0.95),
-        NumberSequenceKeypoint.new(1, 0.4),
+        NumberSequenceKeypoint.new(1, 0.35),
     })
     vg.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 0, 0)),
@@ -717,16 +755,15 @@ local function buildSpaceBackground(parent)
     -- Purple tint
     local t = Instance.new("Frame", parent)
     t.Size = UDim2.new(1, 0, 1, 0)
-    t.BackgroundColor3 = Color3.fromRGB(18, 8, 30)
+    t.BackgroundColor3 = Color3.fromRGB(16, 7, 28)
     t.BackgroundTransparency = 0.55
-    t.BorderSizePixel = 0
-    t.ZIndex = 9
+    t.BorderSizePixel = 0 t.ZIndex = 11
     Instance.new("UICorner", t).CornerRadius = UDim.new(0, 14)
     local tg = Instance.new("UIGradient", t)
     tg.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(12, 8, 22)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(8, 5, 14)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(22, 14, 32)),
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(10, 6, 20)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(6, 4, 12)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(20, 12, 30)),
     })
     tg.Rotation = 90
 end
@@ -735,7 +772,7 @@ end
 -- MENU FRAME
 ----------------------------------------------------------------
 local MENU_W = 580
-local MENU_H = 340
+local MENU_H = 360
 
 local Menu = Instance.new("Frame", ScreenGui)
 Menu.AnchorPoint = Vector2.new(0.5, 0)
@@ -751,11 +788,9 @@ Instance.new("UICorner", Menu).CornerRadius = UDim.new(0, 14)
 pcall(buildSpaceBackground, Menu)
 
 local menuStroke = Instance.new("UIStroke", Menu)
-menuStroke.Thickness = 1.5
-menuStroke.Color = Color3.new(1, 1, 1)
+menuStroke.Thickness = 1.5 menuStroke.Color = Color3.new(1, 1, 1)
 local msg = Instance.new("UIGradient", menuStroke)
-msg.Color = Theme.strokeGrad
-msg.Rotation = 45
+msg.Color = Theme.strokeGrad msg.Rotation = 45
 task.spawn(function()
     while msg.Parent do
         TweenService:Create(msg, TweenInfo.new(8, Enum.EasingStyle.Linear), {Rotation = 405}):Play()
@@ -767,14 +802,12 @@ end)
 -- Header
 local Header = Instance.new("Frame", Menu)
 Header.Size = UDim2.new(1, 0, 0, 36)
-Header.BackgroundTransparency = 1
-Header.ZIndex = 10
-Header.Active = true
+Header.BackgroundTransparency = 1 Header.ZIndex = 15 Header.Active = true
 
 local hl = Instance.new("Frame", Header)
 hl.Size = UDim2.new(1, 0, 0, 1)
 hl.Position = UDim2.new(0, 0, 1, -1)
-hl.BorderSizePixel = 0 hl.ZIndex = 11
+hl.BorderSizePixel = 0 hl.ZIndex = 16
 local hlg = Instance.new("UIGradient", hl)
 hlg.Color = ColorSequence.new({
     ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 0, 0)),
@@ -793,7 +826,7 @@ Title.Text = "AXIOM"
 Title.TextColor3 = Theme.neon
 Title.TextSize = 18
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.ZIndex = 11
+Title.ZIndex = 16
 local tg2 = Instance.new("UIGradient", Title)
 tg2.Color = ColorSequence.new({
     ColorSequenceKeypoint.new(0, Theme.accent),
@@ -813,12 +846,9 @@ Ver.AnchorPoint = Vector2.new(1, 0.5)
 Ver.Position = UDim2.new(1, -16, 0.5, 0)
 Ver.Size = UDim2.new(0, 100, 1, 0)
 Ver.BackgroundTransparency = 1
-Ver.Font = Theme.font
-Ver.Text = "v2.0"
-Ver.TextColor3 = Theme.accentAlt
-Ver.TextSize = 12
-Ver.TextXAlignment = Enum.TextXAlignment.Right
-Ver.ZIndex = 11
+Ver.Font = Theme.font Ver.Text = "v2.0"
+Ver.TextColor3 = Theme.accentAlt Ver.TextSize = 12
+Ver.TextXAlignment = Enum.TextXAlignment.Right Ver.ZIndex = 16
 
 makeDraggable(Menu, Header)
 
@@ -828,8 +858,7 @@ TabBar.Position = UDim2.new(0, 0, 0, 36)
 TabBar.Size = UDim2.new(0, 120, 1, -36)
 TabBar.BackgroundColor3 = Theme.secondary
 TabBar.BackgroundTransparency = 0.35
-TabBar.BorderSizePixel = 0
-TabBar.ZIndex = 10
+TabBar.BorderSizePixel = 0 TabBar.ZIndex = 15
 Instance.new("UICorner", TabBar).CornerRadius = UDim.new(0, 14)
 
 local tl = Instance.new("UIListLayout", TabBar)
@@ -838,25 +867,21 @@ tl.HorizontalAlignment = Enum.HorizontalAlignment.Center
 tl.SortOrder = Enum.SortOrder.LayoutOrder
 local tp = Instance.new("UIPadding", TabBar)
 tp.PaddingTop = UDim.new(0, 8)
-tp.PaddingLeft = UDim.new(0, 6)
-tp.PaddingRight = UDim.new(0, 6)
+tp.PaddingLeft = UDim.new(0, 6) tp.PaddingRight = UDim.new(0, 6)
 
 local tabSep = Instance.new("Frame", Menu)
 tabSep.Size = UDim2.new(0, 1, 1, -36)
 tabSep.Position = UDim2.new(0, 120, 0, 36)
 tabSep.BackgroundColor3 = Theme.accentDeep
-tabSep.BackgroundTransparency = 0.6
-tabSep.BorderSizePixel = 0
-tabSep.ZIndex = 10
+tabSep.BackgroundTransparency = 0.6 tabSep.BorderSizePixel = 0 tabSep.ZIndex = 15
 
 local Content = Instance.new("Frame", Menu)
 Content.Position = UDim2.new(0, 120, 0, 36)
 Content.Size = UDim2.new(1, -120, 1, -36)
-Content.BackgroundTransparency = 1
-Content.ZIndex = 10
+Content.BackgroundTransparency = 1 Content.ZIndex = 15
 
 ----------------------------------------------------------------
--- TAB SYSTEM (two columns always)
+-- TAB SYSTEM
 ----------------------------------------------------------------
 local Pages = {}
 local currentPage = nil
@@ -872,8 +897,7 @@ local function makeTab(name, order)
     btn.TextColor3 = Theme.textDim
     btn.TextSize = 12
     btn.LayoutOrder = order
-    btn.AutoButtonColor = false
-    btn.Active = true
+    btn.AutoButtonColor = false btn.Active = true
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
 
     local ind = Instance.new("Frame", btn)
@@ -881,8 +905,7 @@ local function makeTab(name, order)
     ind.Position = UDim2.new(0, 0, 0.5, 0)
     ind.Size = UDim2.fromOffset(3, 0)
     ind.BackgroundColor3 = Theme.accent
-    ind.BorderSizePixel = 0
-    ind.ZIndex = 2
+    ind.BorderSizePixel = 0 ind.ZIndex = 2
     Instance.new("UICorner", ind).CornerRadius = UDim.new(1, 0)
 
     local bg = Instance.new("UIGradient", btn)
@@ -896,17 +919,15 @@ local function makeTab(name, order)
     container.Size = UDim2.new(1, -16, 1, -16)
     container.Position = UDim2.new(0, 8, 0, 8)
     container.BackgroundTransparency = 1
-    container.Visible = false
-    container.ZIndex = 10
+    container.Visible = false container.ZIndex = 15
 
     local left = Instance.new("ScrollingFrame", container)
     left.Size = UDim2.new(0.48, -2, 1, 0)
     left.BackgroundTransparency = 1
-    left.ScrollBarThickness = 2
-    left.ScrollBarImageColor3 = Theme.accent
+    left.ScrollBarThickness = 2 left.ScrollBarImageColor3 = Theme.accent
     left.AutomaticCanvasSize = Enum.AutomaticSize.Y
     left.CanvasSize = UDim2.new(0, 0, 0, 0)
-    left.ZIndex = 10
+    left.ZIndex = 15
     local ll = Instance.new("UIListLayout", left)
     ll.Padding = UDim.new(0, 6)
     ll.SortOrder = Enum.SortOrder.LayoutOrder
@@ -916,11 +937,10 @@ local function makeTab(name, order)
     right.Size = UDim2.new(0.48, -2, 1, 0)
     right.Position = UDim2.new(0.52, 0, 0, 0)
     right.BackgroundTransparency = 1
-    right.ScrollBarThickness = 2
-    right.ScrollBarImageColor3 = Theme.accent
+    right.ScrollBarThickness = 2 right.ScrollBarImageColor3 = Theme.accent
     right.AutomaticCanvasSize = Enum.AutomaticSize.Y
     right.CanvasSize = UDim2.new(0, 0, 0, 0)
-    right.ZIndex = 10
+    right.ZIndex = 15
     local rl = Instance.new("UIListLayout", right)
     rl.Padding = UDim.new(0, 6)
     rl.SortOrder = Enum.SortOrder.LayoutOrder
@@ -964,184 +984,189 @@ local function makeTab(name, order)
 end
 
 ----------------------------------------------------------------
--- WIDGET LIBRARY — bordered boxes, big text, no pins
+-- FLOATING BUTTONS — 3 shapes
 ----------------------------------------------------------------
-local function applyWidgetStyle(frame)
+local FloatingLayer = Instance.new("Frame", ScreenGui)
+FloatingLayer.Size = UDim2.new(1, 0, 1, 0)
+FloatingLayer.BackgroundTransparency = 1
+FloatingLayer.ZIndex = 12
+
+local floatingButtons = {}
+local floatCount = 0
+
+local function makeFloatingButton(label, callback, shape)
+    if floatingButtons[label] then
+        floatingButtons[label]:Destroy()
+        floatingButtons[label] = nil
+        floatCount = floatCount - 1
+        return
+    end
+
+    local size, corner
+    if shape == "circle" then
+        size = 32 corner = UDim.new(1, 0)
+    elseif shape == "square" then
+        size = 44 corner = UDim.new(0, 8)
+    else -- rectangle
+        sizeX, sizeY = 100, 28 corner = UDim.new(0, 6)
+    end
+
+    local btn = Instance.new("TextButton", FloatingLayer)
+    if shape == "rectangle" then
+        btn.Size = UDim2.fromOffset(sizeX or 100, sizeY or 28)
+    else
+        btn.Size = UDim2.fromOffset(size, size)
+    end
+    btn.Position = UDim2.new(1, -50, 0.5, 20 + floatCount * 40)
+    btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    btn.BackgroundTransparency = 1
+    btn.BorderSizePixel = 0
+    btn.Text = string.upper(string.sub(label, 1, 10))
+    btn.Font = Enum.Font.GothamBold
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = shape == "rectangle" and 8 or 7
+    btn.AutoButtonColor = false
+    btn.ZIndex = 12
+    btn.Active = true
+    btn.ClipsDescendants = false
+    Instance.new("UICorner", btn).CornerRadius = corner or UDim.new(1, 0)
+
+    local stroke = Instance.new("UIStroke", btn)
+    stroke.Thickness = 1.5
+    stroke.Color = Color3.new(1, 1, 1)
+    local sg = Instance.new("UIGradient", stroke)
+    sg.Color = Theme.strokeGrad
+    sg.Rotation = 45
+    task.spawn(function()
+        while sg.Parent do
+            TweenService:Create(sg, TweenInfo.new(6, Enum.EasingStyle.Linear), {Rotation = 405}):Play()
+            task.wait(6)
+            sg.Rotation = 45
+        end
+    end)
+
+    local scale = Instance.new("UIScale", btn)
+    scale.Scale = 0
+    TweenService:Create(scale, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
+
+    -- Drag + click
+    local ai, ds, sp, moved
+    local DRAG_THRESHOLD = 8
+    local lpt
+
+    btn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            if ai then return end
+            ai = input ds = input.Position sp = btn.Position moved = false
+            if input.UserInputType == Enum.UserInputType.Touch then
+                lpt = task.delay(1.5, function()
+                    if floatingButtons[label] and not moved then
+                        floatingButtons[label]:Destroy()
+                        floatingButtons[label] = nil
+                        floatCount = floatCount - 1
+                    end
+                end)
+            end
+            local sc
+            sc = input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    sc:Disconnect()
+                    if lpt then task.cancel(lpt) lpt = nil end
+                    if not moved and ai == input then
+                        Sounds:play("click")
+                        TweenService:Create(scale, TweenInfo.new(0.08), {Scale = 0.9}):Play()
+                        task.delay(0.08, function()
+                            TweenService:Create(scale, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
+                        end)
+                        local ok, err = pcall(callback)
+                        if not ok then notify("Error: "..tostring(err), Theme.danger) end
+                    end
+                    ai = nil
+                end
+            end)
+        end
+    end)
+
+    UIS.InputChanged:Connect(function(input)
+        if input ~= ai then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement
+        and input.UserInputType ~= Enum.UserInputType.Touch then return end
+        local delta = input.Position - ds
+        if math.abs(delta.X) > DRAG_THRESHOLD or math.abs(delta.Y) > DRAG_THRESHOLD then
+            moved = true
+            if lpt then task.cancel(lpt) lpt = nil end
+        end
+        if moved then
+            btn.Position = UDim2.new(sp.X.Scale, sp.X.Offset + delta.X, sp.Y.Scale, sp.Y.Offset + delta.Y)
+        end
+    end)
+
+    btn.MouseButton2Click:Connect(function()
+        if floatingButtons[label] then
+            floatingButtons[label]:Destroy()
+            floatingButtons[label] = nil
+            floatCount = floatCount - 1
+        end
+    end)
+
+    floatingButtons[label] = btn
+    floatCount = floatCount + 1
+end
+
+----------------------------------------------------------------
+-- WIDGET LIBRARY
+----------------------------------------------------------------
+local function styleBox(frame)
     frame.BackgroundColor3 = Theme.secondary
     frame.BorderSizePixel = 0
-    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
     local g = Instance.new("UIGradient", frame)
     g.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(24, 20, 32)),
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(26, 22, 36)),
         ColorSequenceKeypoint.new(1, Color3.fromRGB(16, 13, 22)),
     })
     g.Rotation = 90
     local s = Instance.new("UIStroke", frame)
-    s.Color = Theme.accentDeep
-    s.Thickness = 1
-    s.Transparency = 0.3
+    s.Color = Theme.accentDeep s.Thickness = 1 s.Transparency = 0.2
     frame.MouseEnter:Connect(function()
         TweenService:Create(s, TweenInfo.new(0.2), {Transparency = 0.05, Color = Theme.accent}):Play()
-        TweenService:Create(g, TweenInfo.new(0.2), {
-            Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Color3.fromRGB(30, 24, 42)),
-                ColorSequenceKeypoint.new(1, Color3.fromRGB(22, 18, 30)),
-            })
-        }):Play()
     end)
     frame.MouseLeave:Connect(function()
-        TweenService:Create(s, TweenInfo.new(0.2), {Transparency = 0.3, Color = Theme.accentDeep}):Play()
-        TweenService:Create(g, TweenInfo.new(0.2), {
-            Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Color3.fromRGB(24, 20, 32)),
-                ColorSequenceKeypoint.new(1, Color3.fromRGB(16, 13, 22)),
-            })
-        }):Play()
+        TweenService:Create(s, TweenInfo.new(0.2), {Transparency = 0.2, Color = Theme.accentDeep}):Play()
     end)
     return s, g
 end
 
-local function addSection(pageData, title)
-    local row = Instance.new("Frame", pageData.page)
-    row.Size = UDim2.new(1, -6, 0, 22)
+local function makeToggle(parent, text, default, callback, stateKey)
+    local row = Instance.new("Frame", parent)
+    row.Size = UDim2.new(1, -12, 0, 26)
     row.BackgroundTransparency = 1
-    pageData.order = pageData.order + 1
-    row.LayoutOrder = pageData.order
-    row.ZIndex = 10
 
     local lbl = Instance.new("TextLabel", row)
-    lbl.Size = UDim2.new(0, 200, 1, 0)
-    lbl.BackgroundTransparency = 1
-    lbl.Font = Enum.Font.GothamBold
-    lbl.Text = string.upper(title)
-    lbl.TextColor3 = Theme.accentAlt
-    lbl.TextSize = 12
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.ZIndex = 11
-
-    local sg = Instance.new("UIGradient", lbl)
-    sg.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Theme.accent),
-        ColorSequenceKeypoint.new(0.5, Theme.accentAlt),
-        ColorSequenceKeypoint.new(1, Theme.accent),
-    })
-    task.spawn(function()
-        while lbl.Parent do
-            TweenService:Create(sg, TweenInfo.new(4, Enum.EasingStyle.Linear), {Offset = Vector2.new(1, 0)}):Play()
-            task.wait(4)
-            sg.Offset = Vector2.new(-1, 0)
-        end
-    end)
-
-    local line = Instance.new("Frame", row)
-    line.AnchorPoint = Vector2.new(1, 0.5)
-    line.Position = UDim2.new(1, 0, 0.5, 0)
-    line.Size = UDim2.new(0, 40, 0, 1)
-    line.BorderSizePixel = 0
-    line.ZIndex = 11
-    local lg = Instance.new("UIGradient", line)
-    lg.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 0.3),
-        NumberSequenceKeypoint.new(1, 1),
-    })
-    lg.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Theme.accent),
-        ColorSequenceKeypoint.new(1, Theme.accentAlt),
-    })
-    return row
-end
-
-local function addText(pageData, text)
-    local lbl = Instance.new("TextLabel", pageData.page)
-    lbl.Size = UDim2.new(1, -6, 0, 18)
-    lbl.AutomaticSize = Enum.AutomaticSize.Y
-    lbl.BackgroundTransparency = 1
-    lbl.Font = Theme.font
-    lbl.Text = text
-    lbl.TextColor3 = Theme.textDim
-    lbl.TextSize = 11
-    lbl.TextWrapped = true
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.RichText = true
-    pageData.order = pageData.order + 1
-    lbl.LayoutOrder = pageData.order
-    lbl.ZIndex = 10
-    return lbl
-end
-
-local function addButton(pageData, text, callback, big)
-    local row = Instance.new("Frame", pageData.page)
-    row.Size = UDim2.new(1, -6, 0, big and 40 or 34)
-    row.BackgroundTransparency = 1
-    pageData.order = pageData.order + 1
-    row.LayoutOrder = pageData.order
-    row.ZIndex = 10
-
-    local btn = Instance.new("TextButton", row)
-    btn.Size = UDim2.new(1, 0, 1, 0)
-    btn.BorderSizePixel = 0
-    btn.Text = string.upper(text)
-    btn.Font = Enum.Font.GothamBold
-    btn.TextColor3 = Theme.text
-    btn.TextSize = big and 14 or 12
-    btn.AutoButtonColor = false
-    btn.Active = true
-    btn.ZIndex = 10
-    applyWidgetStyle(btn)
-
-    local bs = Instance.new("UIScale", btn)
-    safeClick(btn, function()
-        Sounds:play("click")
-        TweenService:Create(bs, TweenInfo.new(0.08), {Scale = 0.95}):Play()
-        task.delay(0.08, function()
-            TweenService:Create(bs, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
-        end)
-        callback(btn)
-    end)
-    return row
-end
-
-local function addToggle(pageData, text, default, callback, stateKey)
-    local row = Instance.new("Frame", pageData.page)
-    row.Size = UDim2.new(1, -6, 0, 34)
-    row.BackgroundTransparency = 1
-    pageData.order = pageData.order + 1
-    row.LayoutOrder = pageData.order
-    row.ZIndex = 10
-
-    local frame = Instance.new("Frame", row)
-    frame.Size = UDim2.new(1, 0, 1, 0)
-    frame.Active = true
-    frame.ZIndex = 10
-    applyWidgetStyle(frame)
-
-    local lbl = Instance.new("TextLabel", frame)
-    lbl.Position = UDim2.new(0, 10, 0, 0)
-    lbl.Size = UDim2.new(1, -56, 1, 0)
+    lbl.Position = UDim2.new(0, 8, 0, 0)
+    lbl.Size = UDim2.new(1, -48, 1, 0)
     lbl.BackgroundTransparency = 1
     lbl.Font = Enum.Font.GothamBold
     lbl.Text = string.upper(text)
     lbl.TextColor3 = Theme.text
-    lbl.TextSize = 13
+    lbl.TextSize = 12
     lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.ZIndex = 11
 
-    local track = Instance.new("Frame", frame)
+    local track = Instance.new("Frame", row)
     track.AnchorPoint = Vector2.new(1, 0.5)
-    track.Position = UDim2.new(1, -8, 0.5, 0)
-    track.Size = UDim2.fromOffset(34, 16)
+    track.Position = UDim2.new(1, -4, 0.5, 0)
+    track.Size = UDim2.fromOffset(30, 14)
     track.BackgroundColor3 = Theme.primary
     track.BorderSizePixel = 0
-    track.ZIndex = 11
     Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
 
     local knob = Instance.new("Frame", track)
     knob.AnchorPoint = Vector2.new(0, 0.5)
     knob.Position = UDim2.new(0, 2, 0.5, 0)
-    knob.Size = UDim2.fromOffset(12, 12)
+    knob.Size = UDim2.fromOffset(10, 10)
     knob.BackgroundColor3 = Color3.new(0.5, 0.5, 0.6)
     knob.BorderSizePixel = 0
-    knob.ZIndex = 12
     Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
 
     local state = default or false
@@ -1149,15 +1174,15 @@ local function addToggle(pageData, text, default, callback, stateKey)
 
     local function refresh()
         if state then
-            TweenService:Create(knob, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-                Position = UDim2.new(1, -14, 0.5, 0), BackgroundColor3 = Theme.accent
+            TweenService:Create(knob, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+                Position = UDim2.new(1, -12, 0.5, 0), BackgroundColor3 = Theme.accent
             }):Play()
-            TweenService:Create(track, TweenInfo.new(0.2), {BackgroundColor3 = Theme.accentDeep}):Play()
+            TweenService:Create(track, TweenInfo.new(0.15), {BackgroundColor3 = Theme.accentDeep}):Play()
         else
-            TweenService:Create(knob, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+            TweenService:Create(knob, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
                 Position = UDim2.new(0, 2, 0.5, 0), BackgroundColor3 = Color3.new(0.5, 0.5, 0.6)
             }):Play()
-            TweenService:Create(track, TweenInfo.new(0.2), {BackgroundColor3 = Theme.primary}):Play()
+            TweenService:Create(track, TweenInfo.new(0.15), {BackgroundColor3 = Theme.primary}):Play()
         end
     end
     refresh()
@@ -1179,36 +1204,376 @@ local function addToggle(pageData, text, default, callback, stateKey)
         ConfigManager:save(State)
     end
 
-    safeClick(frame, flip)
+    row.Active = true
+    safeClick(row, flip)
     return row
 end
 
-local function addSlider(pageData, text, min, max, default, step, callback, stateKey)
-    local row = Instance.new("Frame", pageData.page)
-    row.Size = UDim2.new(1, -6, 0, 48)
+-- Shape selector (3 buttons: circle, square, rectangle)
+local function makeShapeSelector(parent, onSelect)
+    local row = Instance.new("Frame", parent)
+    row.Size = UDim2.new(1, -12, 0, 24)
     row.BackgroundTransparency = 1
-    pageData.order = pageData.order + 1
-    row.LayoutOrder = pageData.order
-    row.ZIndex = 10
 
-    local frame = Instance.new("Frame", row)
-    frame.Size = UDim2.new(1, 0, 1, 0)
-    frame.Active = true
-    frame.ZIndex = 10
-    applyWidgetStyle(frame)
+    local lbl = Instance.new("TextLabel", row)
+    lbl.Position = UDim2.new(0, 8, 0, 0)
+    lbl.Size = UDim2.new(0, 80, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Theme.font
+    lbl.Text = "SELECT SHAPE"
+    lbl.TextColor3 = Theme.textDim
+    lbl.TextSize = 10
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
 
-    local lbl = Instance.new("TextLabel", frame)
-    lbl.Position = UDim2.new(0, 10, 0, 4)
-    lbl.Size = UDim2.new(1, -68, 0, 16)
+    local shapes = {"circle", "square", "rectangle"}
+    local labels = {"O", "[]", "==="}
+    local sizes = {{20, 20}, {24, 24}, {40, 16}}
+    local corners = {UDim.new(1, 0), UDim.new(0, 4), UDim.new(0, 3)}
+    local selected = "circle"
+
+    local buttons = {}
+    for i = 1, 3 do
+        local b = Instance.new("TextButton", row)
+        b.AnchorPoint = Vector2.new(0, 0.5)
+        b.Position = UDim2.new(0, 90 + (i - 1) * 45, 0.5, 0)
+        b.Size = UDim2.fromOffset(sizes[i][1], sizes[i][2])
+        b.BackgroundColor3 = Theme.primary
+        b.BorderSizePixel = 0
+        b.Text = ""
+        b.AutoButtonColor = false
+        b.Active = true
+        Instance.new("UICorner", b).CornerRadius = corners[i]
+        local bs = Instance.new("UIStroke", b)
+        bs.Color = Theme.accentDeep bs.Thickness = 1 bs.Transparency = 0.3
+
+        if i == 1 then
+            bs.Color = Theme.accent
+            bs.Transparency = 0
+        end
+
+        b.MouseButton1Click:Connect(function()
+            Sounds:play("click")
+            selected = shapes[i]
+            for j = 1, 3 do
+                if j == i then
+                    TweenService:Create(buttons[j].stroke, TweenInfo.new(0.15), {Color = Theme.accent, Transparency = 0}):Play()
+                else
+                    TweenService:Create(buttons[j].stroke, TweenInfo.new(0.15), {Color = Theme.accentDeep, Transparency = 0.3}):Play()
+                end
+            end
+            onSelect(shapes[i])
+        end)
+
+        buttons[i] = {btn = b, stroke = bs}
+    end
+
+    return row, function() return selected end
+end
+
+-- FLOAT TOGGLE (show/hide floating button for this function)
+local function makeFloatToggle(parent, text, callback)
+    local row = Instance.new("Frame", parent)
+    row.Size = UDim2.new(1, -12, 0, 26)
+    row.BackgroundTransparency = 1
+
+    local lbl = Instance.new("TextLabel", row)
+    lbl.Position = UDim2.new(0, 8, 0, 0)
+    lbl.Size = UDim2.new(1, -48, 1, 0)
     lbl.BackgroundTransparency = 1
     lbl.Font = Enum.Font.GothamBold
     lbl.Text = string.upper(text)
     lbl.TextColor3 = Theme.text
-    lbl.TextSize = 13
+    lbl.TextSize = 12
     lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.ZIndex = 11
 
-    local valueBox = Instance.new("TextBox", frame)
+    local track = Instance.new("Frame", row)
+    track.AnchorPoint = Vector2.new(1, 0.5)
+    track.Position = UDim2.new(1, -4, 0.5, 0)
+    track.Size = UDim2.fromOffset(30, 14)
+    track.BackgroundColor3 = Theme.primary
+    track.BorderSizePixel = 0
+    Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+
+    local knob = Instance.new("Frame", track)
+    knob.AnchorPoint = Vector2.new(0, 0.5)
+    knob.Position = UDim2.new(0, 2, 0.5, 0)
+    knob.Size = UDim2.fromOffset(10, 10)
+    knob.BackgroundColor3 = Color3.new(0.5, 0.5, 0.6)
+    knob.BorderSizePixel = 0
+    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+
+    local floatOn = false
+    local function refresh()
+        if floatOn then
+            TweenService:Create(knob, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+                Position = UDim2.new(1, -12, 0.5, 0), BackgroundColor3 = Theme.accent
+            }):Play()
+            TweenService:Create(track, TweenInfo.new(0.15), {BackgroundColor3 = Theme.accentDeep}):Play()
+        else
+            TweenService:Create(knob, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+                Position = UDim2.new(0, 2, 0.5, 0), BackgroundColor3 = Color3.new(0.5, 0.5, 0.6)
+            }):Play()
+            TweenService:Create(track, TweenInfo.new(0.15), {BackgroundColor3 = Theme.primary}):Play()
+        end
+    end
+
+    row.Active = true
+    safeClick(row, function()
+        floatOn = not floatOn
+        refresh()
+        Sounds:play(floatOn and "toggleOn" or "toggleOff")
+        callback(floatOn)
+    end)
+
+    return row
+end
+
+-- MAIN WIDGET: addFunction (box with toggle + shape selector + float toggle)
+local function addFunction(pageData, name, default, callback, stateKey)
+    local box = Instance.new("Frame", pageData.page)
+    box.Size = UDim2.new(1, -6, 0, 96)
+    pageData.order = pageData.order + 1
+    box.LayoutOrder = pageData.order
+    box.ZIndex = 15
+    styleBox(box)
+
+    -- Header
+    local header = Instance.new("TextLabel", box)
+    header.Size = UDim2.new(1, -12, 0, 20)
+    header.Position = UDim2.new(0, 6, 0, 4)
+    header.BackgroundTransparency = 1
+    header.Font = Enum.Font.GothamBold
+    header.Text = string.upper(name)
+    header.TextColor3 = Theme.neon
+    header.TextSize = 13
+    header.TextXAlignment = Enum.TextXAlignment.Left
+    header.ZIndex = 16
+
+    -- Header gradient line
+    local hLine = Instance.new("Frame", box)
+    hLine.Size = UDim2.new(1, -12, 0, 1)
+    hLine.Position = UDim2.new(0, 6, 0, 24)
+    hLine.BorderSizePixel = 0 hLine.ZIndex = 16
+    local hg = Instance.new("UIGradient", hLine)
+    hg.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.3),
+        NumberSequenceKeypoint.new(0.5, 0),
+        NumberSequenceKeypoint.new(1, 0.3),
+    })
+    hg.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Theme.accent),
+        ColorSequenceKeypoint.new(0.5, Theme.accentAlt),
+        ColorSequenceKeypoint.new(1, Theme.accent),
+    })
+
+    -- Function toggle
+    local toggleRow = makeToggle(box, name, default, callback, stateKey)
+    toggleRow.Position = UDim2.new(0, 0, 0, 28)
+
+    -- Shape selector
+    local currentShape = "circle"
+    local shapeRow = makeShapeSelector(box, function(shape)
+        currentShape = shape
+    end)
+    shapeRow.Position = UDim2.new(0, 0, 0, 56)
+
+    -- Float toggle
+    local floatRow = makeFloatToggle(box, name .. " button", function(on)
+        if on then
+            makeFloatingButton(name, callback, currentShape)
+        else
+            makeFloatingButton(name, callback, currentShape) -- toggles off
+        end
+    end)
+    floatRow.Position = UDim2.new(0, 0, 0, 74)
+
+    return box
+end
+
+-- ACTION WIDGET (box with button + shape selector + float toggle)
+local function addAction(pageData, name, callback, big)
+    local box = Instance.new("Frame", pageData.page)
+    box.Size = UDim2.new(1, -6, 0, big and 96 or 96)
+    pageData.order = pageData.order + 1
+    box.LayoutOrder = pageData.order
+    box.ZIndex = 15
+    styleBox(box)
+
+    -- Header
+    local header = Instance.new("TextLabel", box)
+    header.Size = UDim2.new(1, -12, 0, 20)
+    header.Position = UDim2.new(0, 6, 0, 4)
+    header.BackgroundTransparency = 1
+    header.Font = Enum.Font.GothamBold
+    header.Text = string.upper(name)
+    header.TextColor3 = Theme.neon
+    header.TextSize = 13
+    header.TextXAlignment = Enum.TextXAlignment.Left
+    header.ZIndex = 16
+
+    local hLine = Instance.new("Frame", box)
+    hLine.Size = UDim2.new(1, -12, 0, 1)
+    hLine.Position = UDim2.new(0, 6, 0, 24)
+    hLine.BorderSizePixel = 0 hLine.ZIndex = 16
+    local hg = Instance.new("UIGradient", hLine)
+    hg.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.3),
+        NumberSequenceKeypoint.new(0.5, 0),
+        NumberSequenceKeypoint.new(1, 0.3),
+    })
+    hg.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Theme.accent),
+        ColorSequenceKeypoint.new(0.5, Theme.accentAlt),
+        ColorSequenceKeypoint.new(1, Theme.accent),
+    })
+
+    -- Action button
+    local btn = Instance.new("TextButton", box)
+    btn.Size = UDim2.new(1, -12, 0, 28)
+    btn.Position = UDim2.new(0, 6, 0, 28)
+    btn.BorderSizePixel = 0
+    btn.Text = string.upper(name)
+    btn.Font = Enum.Font.GothamBold
+    btn.TextColor3 = Theme.text
+    btn.TextSize = big and 14 or 12
+    btn.AutoButtonColor = false btn.Active = true btn.ZIndex = 16
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    local bs = Instance.new("UIStroke", btn)
+    bs.Color = Theme.accentDeep bs.Thickness = 1 bs.Transparency = 0.3
+    btn.MouseEnter:Connect(function()
+        TweenService:Create(bs, TweenInfo.new(0.2), {Transparency = 0.05, Color = Theme.accent}):Play()
+    end)
+    btn.MouseLeave:Connect(function()
+        TweenService:Create(bs, TweenInfo.new(0.2), {Transparency = 0.3, Color = Theme.accentDeep}):Play()
+    end)
+    local us = Instance.new("UIScale", btn)
+    safeClick(btn, function()
+        Sounds:play("click")
+        TweenService:Create(us, TweenInfo.new(0.08), {Scale = 0.95}):Play()
+        task.delay(0.08, function()
+            TweenService:Create(us, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
+        end)
+        callback(btn)
+    end)
+
+    -- Shape selector
+    local currentShape = "circle"
+    local shapeRow = makeShapeSelector(box, function(shape)
+        currentShape = shape
+    end)
+    shapeRow.Position = UDim2.new(0, 0, 0, 60)
+
+    -- Float toggle
+    local floatRow = makeFloatToggle(box, name .. " button", function(on)
+        if on then
+            makeFloatingButton(name, callback, currentShape)
+        else
+            makeFloatingButton(name, callback, currentShape)
+        end
+    end)
+    floatRow.Position = UDim2.new(0, 0, 0, 78)
+
+    return box
+end
+
+-- ESP BOX WIDGET (header + per-role toggles + optional sub-section)
+local function addESPBox(pageData, title, toggles, subSection)
+    -- toggles = { {label, stateKey, callback}, ... }
+    -- subSection = { title, toggles } or nil
+
+    local totalHeight = 28 + #toggles * 28
+    if subSection then
+        totalHeight = totalHeight + 24 + #subSection.toggles * 28
+    end
+
+    local box = Instance.new("Frame", pageData.page)
+    box.Size = UDim2.new(1, -6, 0, totalHeight)
+    pageData.order = pageData.order + 1
+    box.LayoutOrder = pageData.order
+    box.ZIndex = 15
+    styleBox(box)
+
+    -- Header
+    local header = Instance.new("TextLabel", box)
+    header.Size = UDim2.new(1, -12, 0, 20)
+    header.Position = UDim2.new(0, 6, 0, 4)
+    header.BackgroundTransparency = 1
+    header.Font = Enum.Font.GothamBold
+    header.Text = string.upper(title)
+    header.TextColor3 = Theme.neon
+    header.TextSize = 13
+    header.TextXAlignment = Enum.TextXAlignment.Left
+    header.ZIndex = 16
+
+    local hLine = Instance.new("Frame", box)
+    hLine.Size = UDim2.new(1, -12, 0, 1)
+    hLine.Position = UDim2.new(0, 6, 0, 24)
+    hLine.BorderSizePixel = 0 hLine.ZIndex = 16
+    local hg = Instance.new("UIGradient", hLine)
+    hg.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.3),
+        NumberSequenceKeypoint.new(0.5, 0),
+        NumberSequenceKeypoint.new(1, 0.3),
+    })
+    hg.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Theme.accent),
+        ColorSequenceKeypoint.new(0.5, Theme.accentAlt),
+        ColorSequenceKeypoint.new(1, Theme.accent),
+    })
+
+    -- Toggles
+    local yOffset = 28
+    for _, t in ipairs(toggles) do
+        local toggle = makeToggle(box, t.label, false, t.callback, t.stateKey)
+        toggle.Position = UDim2.new(0, 0, 0, yOffset)
+        yOffset = yOffset + 28
+    end
+
+    -- Sub-section (for Object ESP)
+    if subSection then
+        local subHeader = Instance.new("TextLabel", box)
+        subHeader.Size = UDim2.new(1, -12, 0, 18)
+        subHeader.Position = UDim2.new(0, 6, 0, yOffset)
+        subHeader.BackgroundTransparency = 1
+        subHeader.Font = Enum.Font.GothamBold
+        subHeader.Text = string.upper(subSection.title)
+        subHeader.TextColor3 = Theme.accentAlt
+        subHeader.TextSize = 11
+        subHeader.TextXAlignment = Enum.TextXAlignment.Left
+        subHeader.ZIndex = 16
+        yOffset = yOffset + 22
+
+        for _, t in ipairs(subSection.toggles) do
+            local toggle = makeToggle(box, t.label, false, t.callback, t.stateKey)
+            toggle.Position = UDim2.new(0, 0, 0, yOffset)
+            yOffset = yOffset + 28
+        end
+    end
+
+    return box
+end
+
+-- Simple slider widget
+local function addSlider(pageData, text, min, max, default, step, callback, stateKey)
+    local box = Instance.new("Frame", pageData.page)
+    box.Size = UDim2.new(1, -6, 0, 48)
+    pageData.order = pageData.order + 1
+    box.LayoutOrder = pageData.order
+    box.ZIndex = 15
+    styleBox(box)
+
+    local lbl = Instance.new("TextLabel", box)
+    lbl.Position = UDim2.new(0, 8, 0, 4)
+    lbl.Size = UDim2.new(1, -68, 0, 16)
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.GothamBold
+    lbl.Text = string.upper(text)
+    lbl.TextColor3 = Theme.neon
+    lbl.TextSize = 12
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.ZIndex = 16
+
+    local valueBox = Instance.new("TextBox", box)
     valueBox.AnchorPoint = Vector2.new(1, 0)
     valueBox.Position = UDim2.new(1, -8, 0, 3)
     valueBox.Size = UDim2.fromOffset(50, 18)
@@ -1218,24 +1583,22 @@ local function addSlider(pageData, text, min, max, default, step, callback, stat
     valueBox.TextColor3 = Theme.accentAlt
     valueBox.TextSize = 11
     valueBox.ClearTextOnFocus = true
-    valueBox.ZIndex = 11
+    valueBox.ZIndex = 16
     Instance.new("UICorner", valueBox).CornerRadius = UDim.new(0, 4)
     local vbs = Instance.new("UIStroke", valueBox)
-    vbs.Color = Theme.accentDeep vbs.Thickness = 1 vbs.Transparency = 0.4
+    vbs.Color = Theme.accentDeep vbs.Thickness = 1 vbs.Transparency = 0.3
 
-    local track = Instance.new("Frame", frame)
-    track.Position = UDim2.new(0, 10, 1, -14)
-    track.Size = UDim2.new(1, -20, 0, 5)
+    local track = Instance.new("Frame", box)
+    track.Position = UDim2.new(0, 8, 1, -14)
+    track.Size = UDim2.new(1, -16, 0, 5)
     track.BackgroundColor3 = Theme.primary
     track.BorderSizePixel = 0
-    track.Active = true
-    track.ZIndex = 11
+    track.Active = true track.ZIndex = 16
     Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
 
     local fill = Instance.new("Frame", track)
     fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
-    fill.BackgroundColor3 = Theme.accent
-    fill.BorderSizePixel = 0
+    fill.BackgroundColor3 = Theme.accent fill.BorderSizePixel = 0
     Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
     local fg = Instance.new("UIGradient", fill)
     fg.Color = ColorSequence.new({
@@ -1307,47 +1670,42 @@ local function addSlider(pageData, text, min, max, default, step, callback, stat
         end
         if eng then ufi(input.Position) end
     end)
-    return row
+    return box
 end
 
+-- Player dropdown
 local function addPlayerDropdown(pageData, label, onSelect)
-    local row = Instance.new("Frame", pageData.page)
-    row.Size = UDim2.new(1, -6, 0, 34)
-    row.BackgroundTransparency = 1
+    local box = Instance.new("Frame", pageData.page)
+    box.Size = UDim2.new(1, -6, 0, 34)
     pageData.order = pageData.order + 1
-    row.LayoutOrder = pageData.order
-    row.ZIndex = 10
+    box.LayoutOrder = pageData.order
+    box.ZIndex = 15
+    styleBox(box)
 
-    local frame = Instance.new("Frame", row)
-    frame.Size = UDim2.new(1, 0, 1, 0)
-    frame.Active = true
-    frame.ZIndex = 10
-    applyWidgetStyle(frame)
-
-    local lbl = Instance.new("TextLabel", frame)
-    lbl.Position = UDim2.new(0, 10, 0, 0)
+    local lbl = Instance.new("TextLabel", box)
+    lbl.Position = UDim2.new(0, 8, 0, 0)
     lbl.Size = UDim2.new(0.5, -10, 1, 0)
     lbl.BackgroundTransparency = 1
     lbl.Font = Enum.Font.GothamBold
     lbl.Text = string.upper(label)
-    lbl.TextColor3 = Theme.text
+    lbl.TextColor3 = Theme.neon
     lbl.TextSize = 12
     lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.ZIndex = 11
+    lbl.ZIndex = 16
 
-    local val = Instance.new("TextLabel", frame)
+    local val = Instance.new("TextLabel", box)
     val.AnchorPoint = Vector2.new(1, 0.5)
     val.Position = UDim2.new(1, -24, 0.5, 0)
     val.Size = UDim2.new(0.5, -24, 1, -4)
     val.BackgroundTransparency = 1
     val.Font = Theme.font
-    val.Text = "Select..."
+    val.Text = "SELECT..."
     val.TextColor3 = Theme.accentAlt
     val.TextSize = 11
     val.TextXAlignment = Enum.TextXAlignment.Right
-    val.ZIndex = 11
+    val.ZIndex = 16
 
-    local arrow = Instance.new("TextLabel", frame)
+    local arrow = Instance.new("TextLabel", box)
     arrow.AnchorPoint = Vector2.new(1, 0.5)
     arrow.Position = UDim2.new(1, -6, 0.5, 0)
     arrow.Size = UDim2.fromOffset(12, 12)
@@ -1356,7 +1714,7 @@ local function addPlayerDropdown(pageData, label, onSelect)
     arrow.Font = Enum.Font.GothamBold
     arrow.TextSize = 10
     arrow.TextColor3 = Theme.accentAlt
-    arrow.ZIndex = 11
+    arrow.ZIndex = 16
 
     local popup = nil
     local function closePopup()
@@ -1367,22 +1725,15 @@ local function addPlayerDropdown(pageData, label, onSelect)
         Sounds:play("click")
         popup = Instance.new("Frame", ScreenGui)
         popup.ZIndex = 50
-        local ap = frame.AbsolutePosition
-        local as = frame.AbsoluteSize
+        local ap = box.AbsolutePosition
+        local as = box.AbsoluteSize
         popup.Position = UDim2.new(0, ap.X, 0, ap.Y + as.Y + 4)
         popup.Size = UDim2.new(0, as.X, 0, math.min(#Players:GetPlayers() * 26, 130))
         popup.BackgroundColor3 = Theme.secondary
-        popup.BorderSizePixel = 0
-        popup.ClipsDescendants = true
+        popup.BorderSizePixel = 0 popup.ClipsDescendants = true
         Instance.new("UICorner", popup).CornerRadius = UDim.new(0, 6)
         local ps = Instance.new("UIStroke", popup)
         ps.Color = Theme.accent ps.Thickness = 1
-        local pg = Instance.new("UIGradient", popup)
-        pg.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(18, 14, 24)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(12, 10, 16)),
-        })
-        pg.Rotation = 90
         local scroll = Instance.new("ScrollingFrame", popup)
         scroll.Size = UDim2.new(1, 0, 1, 0)
         scroll.BackgroundTransparency = 1
@@ -1416,14 +1767,14 @@ local function addPlayerDropdown(pageData, label, onSelect)
         end
         arrow.Text = "^"
     end
-    safeClick(frame, openPopup)
+    safeClick(box, openPopup)
     UIS.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
             if popup then
                 local pos = input.Position
-                local ap = frame.AbsolutePosition
-                local as = frame.AbsoluteSize
+                local ap = box.AbsolutePosition
+                local as = box.AbsoluteSize
                 local pp = popup.AbsolutePosition
                 local ps = popup.AbsoluteSize
                 local inF = pos.X >= ap.X and pos.X <= ap.X + as.X and pos.Y >= ap.Y and pos.Y <= ap.Y + as.Y
@@ -1432,59 +1783,33 @@ local function addPlayerDropdown(pageData, label, onSelect)
             end
         end
     end)
-    return row
+    return box
 end
 
-local function addInput(pageData, placeholder, buttonText, callback)
-    local row = Instance.new("Frame", pageData.page)
-    row.Size = UDim2.new(1, -6, 0, 34)
-    row.BackgroundTransparency = 1
+local function addText(pageData, text)
+    local lbl = Instance.new("TextLabel", pageData.page)
+    lbl.Size = UDim2.new(1, -6, 0, 18)
+    lbl.AutomaticSize = Enum.AutomaticSize.Y
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Theme.font
+    lbl.Text = text
+    lbl.TextColor3 = Theme.textDim
+    lbl.TextSize = 11
+    lbl.TextWrapped = true
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.RichText = true
     pageData.order = pageData.order + 1
-    row.LayoutOrder = pageData.order
-    row.ZIndex = 10
-
-    local box = Instance.new("TextBox", row)
-    box.Size = UDim2.new(1, -76, 1, 0)
-    box.BackgroundColor3 = Theme.secondary
-    box.BorderSizePixel = 0
-    box.PlaceholderText = placeholder
-    box.PlaceholderColor3 = Color3.fromRGB(120, 110, 140)
-    box.Text = ""
-    box.Font = Theme.font
-    box.TextColor3 = Theme.text
-    box.TextSize = 11
-    box.ClearTextOnFocus = false
-    box.ZIndex = 10
-    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
-    Instance.new("UIPadding", box).PaddingLeft = UDim.new(0, 8)
-
-    local btn = Instance.new("TextButton", row)
-    btn.Position = UDim2.new(1, -70, 0, 0)
-    btn.Size = UDim2.new(0, 66, 1, 0)
-    btn.BorderSizePixel = 0
-    btn.Text = string.upper(buttonText)
-    btn.Font = Enum.Font.GothamBold
-    btn.TextColor3 = Theme.text
-    btn.TextSize = 11
-    btn.AutoButtonColor = false
-    btn.Active = true
-    btn.ZIndex = 10
-    applyWidgetStyle(btn)
-    btn.MouseEnter:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Theme.accent}):Play()
-    end)
-    btn.MouseLeave:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Theme.accentDeep}):Play()
-    end)
-    safeClick(btn, function() Sounds:play("click") callback(box.Text, box) end)
-    return row
+    lbl.LayoutOrder = pageData.order
+    lbl.ZIndex = 15
+    return lbl
 end
 
 ----------------------------------------------------------------
 -- ESP, ROLE CACHE, PREDICTION, COMBAT, MOVEMENT, FLING, ANTI
 ----------------------------------------------------------------
+-- (Same logic as before — abbreviated for space, full implementations)
 
-local PlayerESP = { highlights = {}, huds = {}, tracers = {} }
+local PlayerESP = { highlights = {}, huds = {}, tracers = {}, boxes = {} }
 
 local function createHighlight(player)
     if PlayerESP.highlights[player] then return PlayerESP.highlights[player] end
@@ -1492,8 +1817,7 @@ local function createHighlight(player)
     local hl = Instance.new("Highlight")
     hl.Name = randomString()
     hl.Adornee = player.Character
-    hl.FillTransparency = 0.55
-    hl.OutlineTransparency = 0
+    hl.FillTransparency = 0.55 hl.OutlineTransparency = 0
     hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     hl.Parent = ESPGui
     PlayerESP.highlights[player] = hl
@@ -1507,31 +1831,20 @@ local function createHUD(player)
     if not head then return nil end
     local bb = Instance.new("BillboardGui")
     bb.Name = randomString()
-    bb.AlwaysOnTop = true
-    bb.Size = UDim2.fromOffset(200, 38)
-    bb.StudsOffset = Vector3.new(0, 2.5, 0)
-    bb.Adornee = head
-    bb.Parent = ESPGui
+    bb.AlwaysOnTop = true bb.Size = UDim2.fromOffset(200, 38)
+    bb.StudsOffset = Vector3.new(0, 2.5, 0) bb.Adornee = head bb.Parent = ESPGui
     local dl = Instance.new("TextLabel", bb)
-    dl.Size = UDim2.new(1, 0, 0, 18)
-    dl.BackgroundTransparency = 1
-    dl.Font = Enum.Font.GothamBold
-    dl.TextColor3 = Color3.fromRGB(255, 255, 255)
-    dl.TextSize = 13 dl.Text = ""
-    dl.TextStrokeTransparency = 0
-    local ds = Instance.new("UIStroke", dl)
-    ds.Thickness = 2 ds.Transparency = 0
-    local nl = Instance.new("TextLabel", bb)
-    nl.Size = UDim2.new(1, 0, 0, 18)
-    nl.Position = UDim2.new(0, 0, 0, 18)
-    nl.BackgroundTransparency = 1
-    nl.Font = Enum.Font.GothamBold
-    nl.TextColor3 = Color3.fromRGB(255, 255, 255)
-    nl.TextSize = 13 nl.Text = player.Name
-    nl.TextStrokeTransparency = 0
-    local ns = Instance.new("UIStroke", nl)
-    ns.Thickness = 2 ns.Transparency = 0
-    PlayerESP.huds[player] = {gui = bb, dist = dl, distStroke = ds, nick = nl, nickStroke = ns}
+    dl.Size = UDim2.new(1, 0, 0, 18) dl.BackgroundTransparency = 1
+    dl.Font = Enum.Font.GothamBold dl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    dl.TextSize = 13 dl.Text = "" dl.TextStrokeTransparency = 0
+    local ds = Instance.new("UIStroke", dl) ds.Thickness = 2 ds.Transparency = 0
+    local nl2 = Instance.new("TextLabel", bb)
+    nl2.Size = UDim2.new(1, 0, 0, 18) nl2.Position = UDim2.new(0, 0, 0, 18)
+    nl2.BackgroundTransparency = 1 nl2.Font = Enum.Font.GothamBold
+    nl2.TextColor3 = Color3.fromRGB(255, 255, 255) nl2.TextSize = 13
+    nl2.Text = player.Name nl2.TextStrokeTransparency = 0
+    local ns = Instance.new("UIStroke", nl2) ns.Thickness = 2 ns.Transparency = 0
+    PlayerESP.huds[player] = {gui = bb, dist = dl, distStroke = ds, nick = nl2, nickStroke = ns}
     return PlayerESP.huds[player]
 end
 
@@ -1555,10 +1868,8 @@ function ObjectESP:add(adornee, opts)
     local entry = {color = color, opts = opts}
     local hl = Instance.new("Highlight")
     hl.Adornee = adornee hl.FillColor = color hl.OutlineColor = color
-    hl.FillTransparency = opts.fillTransparency or 0.7
-    hl.OutlineTransparency = 0
-    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    hl.Parent = ESPGui
+    hl.FillTransparency = opts.fillTransparency or 0.7 hl.OutlineTransparency = 0
+    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop hl.Parent = ESPGui
     entry.highlight = hl
     if opts.label then
         local bb = Instance.new("BillboardGui")
@@ -1589,8 +1900,7 @@ end
 local FOVCircle = Instance.new("Frame", ESPGui)
 FOVCircle.AnchorPoint = Vector2.new(0.5, 0.5)
 FOVCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
-FOVCircle.BackgroundTransparency = 1
-FOVCircle.BorderSizePixel = 0
+FOVCircle.BackgroundTransparency = 1 FOVCircle.BorderSizePixel = 0
 FOVCircle.Size = UDim2.fromOffset(200, 200)
 FOVCircle.Visible = false FOVCircle.ZIndex = 1
 local fovS = Instance.new("UIStroke", FOVCircle)
@@ -1745,7 +2055,7 @@ local function getPlayerInKnifeFOV()
     return best
 end
 
--- VELOCITY + PREDICTION
+-- PREDICTION (same as before)
 local velocityHistory = {}
 local lastPositions = {}
 RunService.Heartbeat:Connect(function()
@@ -1916,8 +2226,7 @@ local function shootMurderer(force)
     local predicted = getSheriffPredicted(target)
     local gun = char:WaitForChild("Gun", 1)
     if gun and gun:FindFirstChild("Shoot") then
-        local cam = workspace.CurrentCamera
-        local ocf = cam and cam.CFrame or nil
+        local cam = workspace.CurrentCamera local ocf = cam and cam.CFrame or nil
         if State.sheriffCameraTurn and cam then cam.CFrame = CFrame.new(cam.CFrame.Position, predicted) end
         gun.Shoot:FireServer(CFrame.new(char.RightHand.Position), CFrame.new(predicted))
         if State.sheriffCameraTurn and ocf and cam then
@@ -2189,8 +2498,11 @@ RunService.RenderStepped:Connect(function()
         fpsCount = 0 fpsTimer = now
     end
 
-    local anyESP = State.espInnocent or State.espMurderer or State.espSheriff
-                   or State.showDistance or State.showNickname or State.tracerLines
+    local anyESP = State.hlInnocent or State.hlMurderer or State.hlSheriff
+        or State.boxInnocent or State.boxMurderer or State.boxSheriff
+        or State.tracerInnocent or State.tracerMurderer or State.tracerSheriff
+        or State.showDistance or State.showNickname
+
     if not anyESP then
         for p, _ in pairs(PlayerESP.highlights) do removePlayerESP(p) end
     else
@@ -2202,16 +2514,16 @@ RunService.RenderStepped:Connect(function()
             if not player.Character then removePlayerESP(player) continue end
             local role = getPlayerRole(player)
             local alive = isPlayerAlive(player)
-            local roleOn = false
-            local color = ROLE_COLORS.Innocent
-            if role == "Innocent" and alive and State.espInnocent then roleOn = true color = ROLE_COLORS.Innocent
-            elseif role == "Murderer" and alive and State.espMurderer then roleOn = true color = ROLE_COLORS.Murderer
-            elseif role == "Sheriff" and alive and State.espSheriff then roleOn = true color = ROLE_COLORS.Sheriff
-            elseif role == "Hero" and alive then
-                local sheriff = findSheriff()
-                if sheriff ~= player and State.espSheriff then roleOn = true color = ROLE_COLORS.Hero end
-            end
-            if roleOn then
+            local color = ROLE_COLORS[role] or ROLE_COLORS.Innocent
+            if not alive then removePlayerESP(player) continue end
+
+            local hlOn = false
+            if role == "Innocent" and State.hlInnocent then hlOn = true color = ROLE_COLORS.Innocent
+            elseif role == "Murderer" and State.hlMurderer then hlOn = true color = ROLE_COLORS.Murderer
+            elseif role == "Sheriff" and State.hlSheriff then hlOn = true color = ROLE_COLORS.Sheriff
+            elseif role == "Hero" then hlOn = State.hlSheriff color = ROLE_COLORS.Hero end
+
+            if hlOn then
                 local hl = PlayerESP.highlights[player] or createHighlight(player)
                 if hl then hl.FillColor = color hl.OutlineColor = lighten(color, 0.3) hl.Adornee = player.Character end
                 local needHUD = State.showDistance or State.showNickname
@@ -2233,7 +2545,14 @@ RunService.RenderStepped:Connect(function()
                 else
                     if PlayerESP.huds[player] then PlayerESP.huds[player].gui:Destroy() PlayerESP.huds[player] = nil end
                 end
-                if State.tracerLines and cam and myHRP and Drawing then
+                -- Tracers
+                local tracerOn = false
+                if role == "Innocent" and State.tracerInnocent then tracerOn = true
+                elseif role == "Murderer" and State.tracerMurderer then tracerOn = true
+                elseif role == "Sheriff" and State.tracerSheriff then tracerOn = true
+                elseif role == "Hero" and State.tracerSheriff then tracerOn = true end
+
+                if tracerOn and cam and myHRP and Drawing then
                     local tHRP = player.Character:FindFirstChild("HumanoidRootPart")
                     if tHRP then
                         local sp, onScreen = cam:WorldToViewportPoint(tHRP.Position)
@@ -2316,7 +2635,7 @@ RunService.Stepped:Connect(function()
 end)
 
 workspace.DescendantAdded:Connect(function(child)
-    if State.espGunDrop and child.Name == "GunDrop" then
+    if State.objGunDrop and child.Name == "GunDrop" then
         ObjectESP:add(child, {group = "gun", color = Color3.fromRGB(255, 240, 80), label = "Dropped Gun"})
         notify("Sheriff's gun dropped.")
         if State.autoGetGun then
@@ -2330,7 +2649,7 @@ workspace.DescendantAdded:Connect(function(child)
             end
         end
     end
-    if State.espKnife and child.Name == "Knife" and child:IsA("BasePart") then
+    if State.objKnife and child.Name == "Knife" and child:IsA("BasePart") then
         local inChar = false
         for _, p in ipairs(Players:GetPlayers()) do
             if p.Character and child:IsDescendantOf(p.Character) then inChar = true break end
@@ -2366,19 +2685,18 @@ Players.PlayerAdded:Connect(hookChar)
 -- TABS ASSEMBLY
 ----------------------------------------------------------------
 
--- MAIN
+-- ===== MAIN =====
 local MainTab = makeTab("Main", 1)
 local MainL = {page = MainTab.left, order = 0}
 local MainR = {page = MainTab.right, order = 0}
 
-addSection(MainL, "Movement")
 addSlider(MainL, "WalkSpeed", 16, 200, State.ws, 1, function(v) State.ws = v end, "ws")
 addSlider(MainL, "FOV", 50, 120, State.fov, 1, function(v) State.fov = v end, "fov")
-addToggle(MainL, "Loop WS & FOV", false, function(s) State.loopWSFOV = s end, "loopWSFOV")
-addToggle(MainL, "Fly", false, function(s) State.fly = s if s then startFly() else stopFly() end end, "fly")
+addFunction(MainL, "Loop WS & FOV", false, function(s) State.loopWSFOV = s end, "loopWSFOV")
+addFunction(MainL, "Fly", false, function(s) State.fly = s if s then startFly() else stopFly() end end, "fly")
 addSlider(MainL, "Fly Speed", 20, 350, State.flySpeed, 5, function(v) State.flySpeed = v end, "flySpeed")
-addToggle(MainL, "Noclip", false, function(s) State.noclip = s end, "noclip")
-addToggle(MainL, "Infinite Jump", false, function(s)
+addFunction(MainL, "Noclip", false, function(s) State.noclip = s end, "noclip")
+addFunction(MainL, "Infinite Jump", false, function(s)
     State.infJump = s
     if s then
         local hum = safeHum()
@@ -2403,8 +2721,8 @@ addToggle(MainL, "Infinite Jump", false, function(s)
         if landedConn then landedConn:Disconnect() landedConn = nil end
     end
 end, "infJump")
-addToggle(MainL, "Limit inf-jump to 2", false, function(s) State.infJumpLimit2 = s jumpCount = 0 end, "infJumpLimit2")
-addToggle(MainL, "CTRL+Click TP", false, function(s) State.ctrlClickTP = s end, "ctrlClickTP")
+addFunction(MainL, "Limit inf-jump to 2", false, function(s) State.infJumpLimit2 = s jumpCount = 0 end, "infJumpLimit2")
+addFunction(MainL, "CTRL+Click TP", false, function(s) State.ctrlClickTP = s end, "ctrlClickTP")
 
 UIS.InputBegan:Connect(function(inp, proc)
     if proc then return end
@@ -2418,78 +2736,79 @@ UIS.InputBegan:Connect(function(inp, proc)
     end
 end)
 
-addSection(MainR, "Abilities")
-addButton(MainR, "Invisible", function() toggleInvisible() end, true)
+addFunction(MainR, "Invisible", false, function(s)
+    State.invisible = s
+    if s then toggleInvisible() end
+end, "invisible")
 
-addSection(MainR, "Teleport")
-addButton(MainR, "Teleport to lobby", function()
+addAction(MainR, "Teleport to lobby", function()
     local lobby = workspace:FindFirstChild("Lobby")
     if lobby and lobby:FindFirstChild("Spawns") then
         local sp = lobby.Spawns:FindFirstChildWhichIsA("SpawnLocation")
         if sp then safeChar():MoveTo(sp.Position) end
     end
 end)
-addButton(MainR, "Teleport to map", function()
+addAction(MainR, "Teleport to map", function()
     local map = getMap()
     local spawns = map and map:FindFirstChild("Spawns")
     if not spawns then notify("No map.") return end
     local kids = spawns:GetChildren()
     if #kids > 0 then safeChar():MoveTo(kids[math.random(1, #kids)].Position) end
 end)
-addInput(MainR, "Player name", "Go", function(text)
-    if not text or text == "" then return end
-    local target, lname = nil, string.lower(text)
-    for _, p in ipairs(Players:GetPlayers()) do
-        if string.sub(string.lower(p.Name), 1, #lname) == lname
-        or string.sub(string.lower(p.DisplayName), 1, #lname) == lname then
-            target = p break
-        end
-    end
-    if not target or not target.Character then notify("Not found.") return end
-    local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
-    local mHRP = safeHRP()
-    if tHRP and mHRP then mHRP.CFrame = CFrame.new(tHRP.Position + Vector3.new(0, 5, 0)) end
-end)
 
--- VISUALS
+-- ===== VISUALS =====
 local VisTab = makeTab("Visuals", 2)
 local VisL = {page = VisTab.left, order = 0}
 local VisR = {page = VisTab.right, order = 0}
 
-addSection(VisL, "Highlight ESP")
-addToggle(VisL, "Innocent", false, function(s) State.espInnocent = s end, "espInnocent")
-addToggle(VisL, "Murderer", false, function(s) State.espMurderer = s end, "espMurderer")
-addToggle(VisL, "Sheriff", false, function(s) State.espSheriff = s end, "espSheriff")
-
-addSection(VisL, "Object ESP")
-addToggle(VisL, "Dropped Gun", false, function(s)
-    State.espGunDrop = s
-    if s then
-        local map = getMap()
-        local drop = map and map:FindFirstChild("GunDrop")
-        if drop then ObjectESP:add(drop, {group = "gun", color = Color3.fromRGB(255, 240, 80), label = "Dropped Gun"}) end
-    else ObjectESP:removeGroup("gun") end
-end, "espGunDrop")
-addToggle(VisL, "Murderer's Knife", false, function(s)
-    State.espKnife = s
-    if s then
-        for _, v in ipairs(workspace:GetDescendants()) do
-            if v.Name == "Knife" and v:IsA("BasePart") then
-                local inChar = false
-                for _, p in ipairs(Players:GetPlayers()) do
-                    if p.Character and v:IsDescendantOf(p.Character) then inChar = true break end
+-- Highlight ESP box with per-role toggles + Object ESP sub-section
+addESPBox(VisL, "HIGHLIGHT ESP", {
+    {label = "Innocent", stateKey = "hlInnocent", callback = function(s) State.hlInnocent = s end},
+    {label = "Murderer", stateKey = "hlMurderer", callback = function(s) State.hlMurderer = s end},
+    {label = "Sheriff", stateKey = "hlSheriff", callback = function(s) State.hlSheriff = s end},
+}, {
+    title = "OBJECT",
+    toggles = {
+        {label = "Dropped gun", stateKey = "objGunDrop", callback = function(s)
+            State.objGunDrop = s
+            if s then
+                local map = getMap()
+                local drop = map and map:FindFirstChild("GunDrop")
+                if drop then ObjectESP:add(drop, {group = "gun", color = Color3.fromRGB(255, 240, 80), label = "Dropped Gun"}) end
+            else ObjectESP:removeGroup("gun") end
+        end},
+        {label = "Murderer's knife", stateKey = "objKnife", callback = function(s)
+            State.objKnife = s
+            if s then
+                for _, v in ipairs(workspace:GetDescendants()) do
+                    if v.Name == "Knife" and v:IsA("BasePart") then
+                        local inChar = false
+                        for _, p in ipairs(Players:GetPlayers()) do
+                            if p.Character and v:IsDescendantOf(p.Character) then inChar = true break end
+                        end
+                        if not inChar then ObjectESP:add(v, {group = "knife", color = Color3.fromRGB(255, 50, 50), label = "Knife"}) end
+                    end
                 end
-                if not inChar then ObjectESP:add(v, {group = "knife", color = Color3.fromRGB(255, 50, 50), label = "Knife"}) end
-            end
-        end
-    else ObjectESP:removeGroup("knife") end
-end, "espKnife")
+            else ObjectESP:removeGroup("knife") end
+        end},
+    },
+})
 
-addSection(VisR, "Info")
-addToggle(VisR, "Show distance", false, function(s) State.showDistance = s end, "showDistance")
-addToggle(VisR, "Show nickname", false, function(s) State.showNickname = s end, "showNickname")
-addToggle(VisR, "Hide my ESP", false, function(s) State.hideSelfESP = s end, "hideSelfESP")
-addToggle(VisR, "Round timer", false, function(s)
+-- Tracer ESP box with per-role toggles
+addESPBox(VisL, "TRACER ESP", {
+    {label = "Innocent", stateKey = "tracerInnocent", callback = function(s) State.tracerInnocent = s end},
+    {label = "Murderer", stateKey = "tracerMurderer", callback = function(s) State.tracerMurderer = s end},
+    {label = "Sheriff", stateKey = "tracerSheriff", callback = function(s) State.tracerSheriff = s end},
+})
+
+addESPBox(VisR, "INFO", {
+    {label = "Show distance", stateKey = "showDistance", callback = function(s) State.showDistance = s end},
+    {label = "Show nickname", stateKey = "showNickname", callback = function(s) State.showNickname = s end},
+    {label = "Hide my ESP", stateKey = "hideSelfESP", callback = function(s) State.hideSelfESP = s end},
+    {label = "Crosshair", stateKey = "crosshair", callback = function(s) State.crosshair = s end},
+})
+
+addFunction(VisR, "Round timer", false, function(s)
     State.roundTimer = s
     if s then
         local tl = Instance.new("TextLabel", ScreenGui)
@@ -2510,61 +2829,55 @@ addToggle(VisR, "Round timer", false, function(s)
         end)
     end
 end, "roundTimer")
-addToggle(VisR, "Role reveal", false, function(s) State.roleReveal = s end, "roleReveal")
-addToggle(VisR, "Tracer lines", false, function(s) State.tracerLines = s end, "tracerLines")
-addToggle(VisR, "Crosshair", false, function(s) State.crosshair = s end, "crosshair")
 
-addSection(VisR, "Player info")
-addButton(VisR, "Copy murderer name", function()
+addFunction(VisR, "Role reveal", false, function(s) State.roleReveal = s end, "roleReveal")
+
+addAction(VisR, "Copy murderer name", function()
     local m = findMurderer()
     if not m then notify("No murderer.") return end
     if setclipboard then setclipboard(m.Name) end
     notify("Copied: "..m.Name)
 end)
-addButton(VisR, "Copy sheriff name", function()
+addAction(VisR, "Copy sheriff name", function()
     local s = findSheriff()
     if not s then notify("No sheriff.") return end
     if setclipboard then setclipboard(s.Name) end
     notify("Copied: "..s.Name)
 end)
 
--- COMBAT
+-- ===== COMBAT =====
 local CmbTab = makeTab("Combat", 3)
 local CmbL = {page = CmbTab.left, order = 0}
 local CmbR = {page = CmbTab.right, order = 0}
 
-addSection(CmbL, "Aimlock")
 addPlayerDropdown(CmbL, "Select player:", function(p)
     State.aimlockTarget = p notify("Target: "..p.DisplayName)
 end)
-addButton(CmbL, "Target Aimlock", function(btn)
+addAction(CmbL, "Target Aimlock", function(btn)
     State.aimlockActive = not State.aimlockActive
     btn.Text = State.aimlockActive and "TARGET AIMLOCK: ON" or "TARGET AIMLOCK"
 end)
-addButton(CmbL, "Murderer Aimlock", function(btn)
+addAction(CmbL, "Murderer Aimlock", function(btn)
     State.murdererAimlock = not State.murdererAimlock
     btn.Text = State.murdererAimlock and "MURDERER AIM: ON" or "MURDERER AIMLOCK"
 end)
-addButton(CmbL, "Sheriff Aimlock", function(btn)
+addAction(CmbL, "Sheriff Aimlock", function(btn)
     State.sheriffAimlock = not State.sheriffAimlock
     btn.Text = State.sheriffAimlock and "SHERIFF AIM: ON" or "SHERIFF AIMLOCK"
 end)
 
-addSection(CmbL, "Murderer")
-addToggle(CmbL, "Throw Silent Aim", false, function(s)
+addFunction(CmbL, "Throw Silent Aim", false, function(s)
     State.silentThrowAim = s if s then setupSilentAim() notify("Silent aim armed.") end
 end, "silentThrowAim")
-addToggle(CmbL, "Auto Knife Throw", false, function(s) State.autoKnifeThrow = s end, "autoKnifeThrow")
-addToggle(CmbL, "Spawn Knife Near Victim", false, function(s) State.spawnKnifeAtPlayer = s end, "spawnKnifeAtPlayer")
-addToggle(CmbL, "Wall Check (Murderer)", true, function(s) State.murdererWallCheck = s end, "murdererWallCheck")
+addFunction(CmbL, "Auto Knife Throw", false, function(s) State.autoKnifeThrow = s end, "autoKnifeThrow")
+addFunction(CmbL, "Spawn Knife Near Victim", false, function(s) State.spawnKnifeAtPlayer = s end, "spawnKnifeAtPlayer")
+addFunction(CmbL, "Wall Check (Murderer)", true, function(s) State.murdererWallCheck = s end, "murdererWallCheck")
 
-addSection(CmbL, "FOV Aim Assist")
-addToggle(CmbL, "Enable FOV Circle", false, function(s) State.knifeFOVEnabled = s updateFOVCircle() end, "knifeFOVEnabled")
+addFunction(CmbL, "FOV Circle", false, function(s) State.knifeFOVEnabled = s updateFOVCircle() end, "knifeFOVEnabled")
 addSlider(CmbL, "FOV Radius (px)", 50, 600, State.knifeFOV, 5, function(v) State.knifeFOV = v updateFOVCircle() end, "knifeFOV")
 
-addSection(CmbL, "Melee")
-addToggle(CmbL, "Kill Aura", false, function(s) State.killAuraOn = s end, "killAuraOn")
-addButton(CmbL, "Kill Nearest", function()
+addFunction(CmbL, "Kill Aura", false, function(s) State.killAuraOn = s end, "killAuraOn")
+addAction(CmbL, "Kill Nearest", function()
     if findMurderer() ~= LocalPlayer then notify("Not murderer.") return end
     local char = safeChar() local hum = safeHum()
     if not char or not hum then return end
@@ -2583,26 +2896,19 @@ addButton(CmbL, "Kill Nearest", function()
     char.Knife.Stab:FireServer("Slash")
 end)
 
-addSection(CmbL, "Knife Prediction")
-addToggle(CmbL, "Prioritize Ping", false, function(s) State.knifePrioritizePing = s end, "knifePrioritizePing")
-addToggle(CmbL, "Predict Jump", false, function(s) State.knifePredictJump = s end, "knifePredictJump")
-addToggle(CmbL, "Predict Lag", false, function(s) State.knifePredictLag = s end, "knifePredictLag")
-addSlider(CmbL, "Max Sim Time (ms)", 30, 120, State.knifeMaxSim, 1, function(v) State.knifeMaxSim = v end, "knifeMaxSim")
-addSlider(CmbL, "Predict Interval (ms)", 1, 800, State.knifeInterval, 1, function(v) State.knifeInterval = v end, "knifeInterval")
-addSlider(CmbL, "H Multiplier (%)", 90, 350, State.knifeHMul, 1, function(v) State.knifeHMul = v end, "knifeHMul")
-addSlider(CmbL, "V Multiplier (%)", 90, 350, State.knifeVMul, 1, function(v) State.knifeVMul = v end, "knifeVMul")
-addSlider(CmbL, "X Offset (%)", -350, 350, State.knifeOffsetX, 1, function(v) State.knifeOffsetX = v end, "knifeOffsetX")
-addSlider(CmbL, "Y Offset (%)", -350, 350, State.knifeOffsetY, 1, function(v) State.knifeOffsetY = v end, "knifeOffsetY")
-addSlider(CmbL, "Z Offset (%)", -350, 350, State.knifeOffsetZ, 1, function(v) State.knifeOffsetZ = v end, "knifeOffsetZ")
+addSlider(CmbL, "Knife Max Sim (ms)", 30, 120, State.knifeMaxSim, 1, function(v) State.knifeMaxSim = v end, "knifeMaxSim")
+addSlider(CmbL, "Knife Interval (ms)", 1, 800, State.knifeInterval, 1, function(v) State.knifeInterval = v end, "knifeInterval")
+addSlider(CmbL, "Knife H Mul (%)", 90, 350, State.knifeHMul, 1, function(v) State.knifeHMul = v end, "knifeHMul")
+addSlider(CmbL, "Knife V Mul (%)", 90, 350, State.knifeVMul, 1, function(v) State.knifeVMul = v end, "knifeVMul")
 
-addSection(CmbR, "Sheriff")
-addButton(CmbR, "Shoot Murderer", function() shootMurderer(false) end, true)
-addToggle(CmbR, "Auto-Shoot", false, function(s) State.autoShoot = s end, "autoShoot")
-addToggle(CmbR, "Wall Check (Sheriff)", true, function(s) State.sheriffWallCheck = s end, "sheriffWallCheck")
-addToggle(CmbR, "Auto-Unequip", true, function(s) State.autoUnequipGun = s end, "autoUnequipGun")
-addToggle(CmbR, "Camera Turn", false, function(s) State.sheriffCameraTurn = s end, "sheriffCameraTurn")
-addToggle(CmbR, "Auto-Grab Gun", false, function(s) State.autoGetGun = s end, "autoGetGun")
-addButton(CmbR, "Gun Drop Teleport", function()
+-- Right column: Sheriff
+addAction(CmbR, "Shoot Murderer", function() shootMurderer(false) end, true)
+addFunction(CmbR, "Auto-Shoot", false, function(s) State.autoShoot = s end, "autoShoot")
+addFunction(CmbR, "Wall Check (Sheriff)", true, function(s) State.sheriffWallCheck = s end, "sheriffWallCheck")
+addFunction(CmbR, "Auto-Unequip", true, function(s) State.autoUnequipGun = s end, "autoUnequipGun")
+addFunction(CmbR, "Camera Turn", false, function(s) State.sheriffCameraTurn = s end, "sheriffCameraTurn")
+addFunction(CmbR, "Auto-Grab Gun", false, function(s) State.autoGetGun = s end, "autoGetGun")
+addAction(CmbR, "Gun Drop Teleport", function()
     local map = getMap()
     local drop = map and map:FindFirstChild("GunDrop")
     if not drop then notify("No gun on ground.") return end
@@ -2613,28 +2919,20 @@ addButton(CmbR, "Gun Drop Teleport", function()
     char:PivotTo(prev)
 end)
 
-addSection(CmbR, "Sheriff Prediction")
-addToggle(CmbR, "Prioritize Ping", false, function(s) State.sheriffPrioritizePing = s end, "sheriffPrioritizePing")
-addToggle(CmbR, "Predict Jump", false, function(s) State.sheriffPredictJump = s end, "sheriffPredictJump")
-addToggle(CmbR, "Predict Lag", false, function(s) State.sheriffPredictLag = s end, "sheriffPredictLag")
-addSlider(CmbR, "Max Sim Time (ms)", 30, 90, State.sheriffMaxSim, 1, function(v) State.sheriffMaxSim = v end, "sheriffMaxSim")
-addSlider(CmbR, "Predict Interval (ms)", 1, 800, State.sheriffInterval, 1, function(v) State.sheriffInterval = v end, "sheriffInterval")
-addSlider(CmbR, "H Multiplier (%)", 90, 350, State.sheriffHMul, 1, function(v) State.sheriffHMul = v end, "sheriffHMul")
-addSlider(CmbR, "V Multiplier (%)", 90, 350, State.sheriffVMul, 1, function(v) State.sheriffVMul = v end, "sheriffVMul")
-addSlider(CmbR, "X Offset (%)", -350, 350, State.sheriffOffsetX, 1, function(v) State.sheriffOffsetX = v end, "sheriffOffsetX")
-addSlider(CmbR, "Y Offset (%)", -350, 350, State.sheriffOffsetY, 1, function(v) State.sheriffOffsetY = v end, "sheriffOffsetY")
-addSlider(CmbR, "Z Offset (%)", -350, 350, State.sheriffOffsetZ, 1, function(v) State.sheriffOffsetZ = v end, "sheriffOffsetZ")
+addSlider(CmbR, "Sheriff Max Sim (ms)", 30, 90, State.sheriffMaxSim, 1, function(v) State.sheriffMaxSim = v end, "sheriffMaxSim")
+addSlider(CmbR, "Sheriff Interval (ms)", 1, 800, State.sheriffInterval, 1, function(v) State.sheriffInterval = v end, "sheriffInterval")
+addSlider(CmbR, "Sheriff H Mul (%)", 90, 350, State.sheriffHMul, 1, function(v) State.sheriffHMul = v end, "sheriffHMul")
+addSlider(CmbR, "Sheriff V Mul (%)", 90, 350, State.sheriffVMul, 1, function(v) State.sheriffVMul = v end, "sheriffVMul")
 
--- FLING (merged with Anti)
+-- ===== FLING (merged with Anti) =====
 local FlTab = makeTab("Fling", 4)
 local FlL = {page = FlTab.left, order = 0}
 local FlR = {page = FlTab.right, order = 0}
 
-addSection(FlL, "Fling")
-addButton(FlL, "Fling Sheriff", function() local s = findSheriff() if not s then notify("No sheriff.") return end microFling(s) end)
-addButton(FlL, "Fling Murderer", function() local m = findMurderer() if not m then notify("No murderer.") return end microFling(m) end)
-addButton(FlL, "Fling Nearest", function() local n = findNearestPlayer() if not n then notify("No target.") return end microFling(n) end)
-addButton(FlL, "Fling Everyone", function()
+addAction(FlL, "Fling Sheriff", function() local s = findSheriff() if not s then notify("No sheriff.") return end microFling(s) end)
+addAction(FlL, "Fling Murderer", function() local m = findMurderer() if not m then notify("No murderer.") return end microFling(m) end)
+addAction(FlL, "Fling Nearest", function() local n = findNearestPlayer() if not n then notify("No target.") return end microFling(n) end)
+addAction(FlL, "Fling Everyone", function()
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LocalPlayer and p.Character then
             task.spawn(function() microFling(p) end)
@@ -2642,13 +2940,12 @@ addButton(FlL, "Fling Everyone", function()
         end
     end
 end)
-addToggle(FlL, "Touch Fling", false, function(s)
+addFunction(FlL, "Touch Fling", false, function(s)
     State.touchFling = s
     if s then notify("Touch fling ON.") else notify("Touch fling OFF.") end
 end, "touchFling")
 
-addSection(FlR, "Anti")
-addToggle(FlR, "Anti-Fling", false, function(s)
+addFunction(FlR, "Anti-Fling", false, function(s)
     State.antiFling = s
     if s then
         antiFlingConn = RunService.Heartbeat:Connect(function()
@@ -2689,7 +2986,7 @@ addToggle(FlR, "Anti-Fling", false, function(s)
     end
 end, "antiFling")
 
-addToggle(FlR, "Anti-Void", false, function(s)
+addFunction(FlR, "Anti-Void", false, function(s)
     State.antiVoid = s
     if s then
         antiVoidConn = RunService.Heartbeat:Connect(function()
@@ -2708,7 +3005,7 @@ addToggle(FlR, "Anti-Void", false, function(s)
     end
 end, "antiVoid")
 
-addToggle(FlR, "Anti-AFK", false, function(s)
+addFunction(FlR, "Anti-AFK", false, function(s)
     State.antiAFK = s
     if s then
         if getconnections then
@@ -2726,24 +3023,22 @@ addToggle(FlR, "Anti-AFK", false, function(s)
     end
 end, "antiAFK")
 
--- SETTINGS
+-- ===== SETTINGS =====
 local SetTab = makeTab("Settings", 5)
 local SetL = {page = SetTab.left, order = 0}
 local SetR = {page = SetTab.right, order = 0}
 
-addSection(SetL, "UI")
-addToggle(SetL, "UI Sounds", true, function(s) State.uiSounds = s end, "uiSounds")
-addToggle(SetL, "Stream-Proof", false, function(s)
+addFunction(SetL, "UI Sounds", true, function(s) State.uiSounds = s end, "uiSounds")
+addFunction(SetL, "Stream-Proof", false, function(s)
     State.streamProof = s
     ScreenGui.Enabled = not s ESPGui.Enabled = not s
 end, "streamProof")
-addToggle(SetL, "FPS Counter", false, function(s) State.fpsCounter = s end, "fpsCounter")
+addFunction(SetL, "FPS Counter", false, function(s) State.fpsCounter = s end, "fpsCounter")
 
-addSection(SetR, "Script")
 addText(SetR, "Settings auto-save on every change.")
 addText(SetR, "Stream-proof hotkey: Ctrl+Alt+S")
 addText(SetR, "Menu hotkey: Ctrl+Alt+Y")
-addButton(SetR, "Unload AXIOM", function()
+addAction(SetR, "Unload AXIOM", function()
     if oldNamecall and silentAimReady then
         pcall(function() hookmetamethod(game, "__namecall", oldNamecall) end)
     end
